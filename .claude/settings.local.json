@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(winget *)",
+      "Bash(gh *)",
+      "Bash(ssh -T git@github.com)",
+      "Bash(npx skills *)",
+      "Bash(npx skills@latest *)",
+      "Bash(npm --version)"
+    ]
+  }
+}

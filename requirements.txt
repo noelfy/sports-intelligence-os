@@ -1,0 +1,3 @@
+-r pose_estimation/requirements.txt
+-r backend/requirements.txt
+-r analysis_engine/requirements.txt
