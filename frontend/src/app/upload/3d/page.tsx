@@ -274,6 +274,7 @@ export default function Upload3DPage() {
         <MultiVideoUploader
           calibrationSessionId={calibrationId}
           exerciseId={selectedExercise?.id}
+          exerciseName={selectedExercise?.name}
           onComplete={(analysisId) => {
             router.push(`/results/${analysisId}`);
           }}

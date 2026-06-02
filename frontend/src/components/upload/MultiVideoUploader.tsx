@@ -3,12 +3,22 @@
 import { useState, useCallback, useRef } from "react";
 import { useStore } from "@/lib/store";
 import { uploadMultiVideos, pollUntilComplete } from "@/lib/api";
+import { useClientAnalysis } from "@/hooks/useClientAnalysis";
 import { cn } from "@/lib/utils";
 import { Plus, X, Video, Upload, AlertCircle } from "lucide-react";
+
+function isProduction(): boolean {
+  if (typeof window === "undefined") return false;
+  return (
+    !window.location.hostname.includes("localhost") &&
+    !window.location.hostname.includes("127.0.0.1")
+  );
+}
 
 interface MultiVideoUploaderProps {
   calibrationSessionId?: string | null;
   exerciseId?: string;
+  exerciseName?: string;
   onComplete?: (analysisId: string) => void;
 }
 
@@ -24,6 +34,7 @@ const MIN_CAMERAS = 1;
 export function MultiVideoUploader({
   calibrationSessionId,
   exerciseId,
+  exerciseName,
   onComplete,
 }: MultiVideoUploaderProps) {
   const { upload, setUpload, resetUpload } = useStore();
@@ -33,11 +44,17 @@ export function MultiVideoUploader({
   ]);
   const nextId = useRef(2);
 
+  // Client-side analysis hook (used in production/Vercel)
+  const clientAnalysis = useClientAnalysis();
+
   const filledCount = slots.filter((s) => s.file !== null).length;
 
   const addSlot = () => {
     if (slots.length >= MAX_CAMERAS) return;
-    setSlots((prev) => [...prev, { id: nextId.current++, file: null, dragOver: false }]);
+    setSlots((prev) => [
+      ...prev,
+      { id: nextId.current++, file: null, dragOver: false },
+    ]);
   };
 
   const removeSlot = (slotId: number) => {
@@ -75,9 +92,18 @@ export function MultiVideoUploader({
         setUpload({ error });
         return;
       }
-      // Check for duplicate files
-      if (slots.some((s) => s.file?.name === file.name && s.file?.size === file.size && s.id !== slotId)) {
-        setUpload({ error: "Duplicate file — each camera needs a different video (请选择不同的视频文件)" });
+      if (
+        slots.some(
+          (s) =>
+            s.file?.name === file.name &&
+            s.file?.size === file.size &&
+            s.id !== slotId
+        )
+      ) {
+        setUpload({
+          error:
+            "Duplicate file — each camera needs a different video (请选择不同的视频文件)",
+        });
         return;
       }
       setSlotFile(slotId, file);
@@ -99,11 +125,49 @@ export function MultiVideoUploader({
   const handleUpload = async () => {
     const filledSlots = slots.filter((s) => s.file !== null);
     if (filledSlots.length < MIN_CAMERAS) {
-      setUpload({ error: `Need at least ${MIN_CAMERAS} video (至少需要 ${MIN_CAMERAS} 个视频)` });
+      setUpload({
+        error: `Need at least ${MIN_CAMERAS} video (至少需要 ${MIN_CAMERAS} 个视频)`,
+      });
       return;
     }
 
     const files = filledSlots.map((s) => s.file!);
+
+    // ── Production: Client-side multi-camera MediaPipe analysis ──
+    if (isProduction()) {
+      setUpload({
+        files,
+        status: "uploading", // reuse for model loading
+        progress: 0,
+        error: null,
+        analysisId: null,
+      });
+
+      const result = await clientAnalysis.analyzeMulti(
+        files,
+        exerciseId,
+        exerciseName
+      );
+
+      if (!result) {
+        setUpload({
+          status: "error",
+          error: clientAnalysis.error || "3D analysis failed. (3D分析失败)",
+        });
+        return;
+      }
+
+      setUpload({
+        status: "completed",
+        progress: 100,
+        analysisId: result.analysis_id,
+      });
+
+      onComplete?.(result.analysis_id);
+      return;
+    }
+
+    // ── Development: Upload to Python backend ──
     setUpload({ files, status: "uploading", progress: 0, error: null });
 
     try {
@@ -120,19 +184,43 @@ export function MultiVideoUploader({
       if (finalResult.status === "failed") {
         setUpload({
           status: "error",
-          error: "3D analysis failed. Ensure videos are synchronized and show the same movement from different angles. (3D分析失败，请确保视频同步且从不同角度拍摄同一动作)",
+          error:
+            "3D analysis failed. Ensure videos are synchronized and show the same movement from different angles. (3D分析失败，请确保视频同步且从不同角度拍摄同一动作)",
         });
       } else {
         setUpload({ status: "completed" });
         onComplete?.(result.analysis_id);
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Upload failed (上传失败)";
+      const msg =
+        err instanceof Error ? err.message : "Upload failed (上传失败)";
       setUpload({ status: "error", error: msg });
     }
   };
 
-  const canUpload = filledCount >= MIN_CAMERAS && upload.status !== "uploading" && upload.status !== "processing";
+  const canUpload =
+    filledCount >= MIN_CAMERAS &&
+    upload.status !== "uploading" &&
+    upload.status !== "processing";
+
+  // Map client analysis states to upload status for UI
+  const effectiveStatus =
+    clientAnalysis.status === "loading_model" ||
+    clientAnalysis.status === "processing"
+      ? clientAnalysis.status === "loading_model"
+        ? "uploading"
+        : "processing"
+      : upload.status;
+
+  const effectiveProgress =
+    clientAnalysis.status !== "idle" && clientAnalysis.status !== "error"
+      ? clientAnalysis.progress
+      : upload.progress;
+
+  const effectiveMessage =
+    clientAnalysis.status !== "idle" && clientAnalysis.message
+      ? clientAnalysis.message
+      : "";
 
   // ── Render ──
   return (
@@ -149,7 +237,9 @@ export function MultiVideoUploader({
             onDragOver={(v) => setSlotDragOver(slot.id, v)}
             onDrop={(e) => handleDrop(e, slot.id)}
             canRemove={slots.length > MIN_CAMERAS}
-            disabled={upload.status === "uploading" || upload.status === "processing"}
+            disabled={
+              upload.status === "uploading" || upload.status === "processing"
+            }
           />
         ))}
       </div>
@@ -166,7 +256,7 @@ export function MultiVideoUploader({
         </button>
       )}
 
-      {/* Error display */}
+      {/* Error display (idle state) */}
       {upload.error && upload.status === "idle" && (
         <div className="flex items-start gap-2 px-4 py-3 bg-red-500/10 border border-red-500/20 rounded-xl">
           <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
@@ -174,7 +264,7 @@ export function MultiVideoUploader({
         </div>
       )}
 
-      {/* Upload button & progress */}
+      {/* Upload button */}
       {upload.status === "idle" && (
         <button
           type="button"
@@ -188,42 +278,66 @@ export function MultiVideoUploader({
           )}
         >
           {filledCount >= MIN_CAMERAS
-            ? `Start 3D Analysis${filledCount >= 2 ? ` with ${filledCount} Cameras` : ""} (开始 3D 分析)`
+            ? `Start ${
+                filledCount >= 2 ? "3D" : ""
+              } Analysis with ${filledCount} Camera${filledCount > 1 ? "s" : ""} (开始${
+                filledCount >= 2 ? "3D" : ""
+              }分析)`
             : `Select at least ${MIN_CAMERAS} video (至少选择 ${MIN_CAMERAS} 个视频)`}
         </button>
       )}
 
-      {/* Uploading state */}
-      {upload.status === "uploading" && (
+      {/* Uploading / Loading Model state */}
+      {effectiveStatus === "uploading" && (
         <div className="space-y-3">
           <div className="flex items-center gap-3">
             <div className="w-5 h-5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
             <p className="text-amber-400 text-sm font-medium">
-              Uploading {filledCount} videos... (上传中...)
+              {effectiveMessage ||
+                `Processing ${filledCount} videos... (处理${filledCount}个视频...)`}
             </p>
           </div>
-          <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
-            <div
-              className="h-full bg-gradient-to-r from-amber-400 to-orange-500 rounded-full transition-all duration-300"
-              style={{ width: `${upload.progress}%` }}
-            />
-          </div>
-          <p className="text-xs text-slate-500 text-center">{upload.progress}%</p>
+          {effectiveProgress > 0 && (
+            <>
+              <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-amber-400 to-orange-500 rounded-full transition-all duration-300"
+                  style={{ width: `${effectiveProgress}%` }}
+                />
+              </div>
+              <p className="text-xs text-slate-500 text-center">
+                {effectiveProgress}%
+              </p>
+            </>
+          )}
         </div>
       )}
 
       {/* Processing state */}
-      {upload.status === "processing" && (
+      {effectiveStatus === "processing" && (
         <div className="space-y-4 text-center">
           <div className="w-12 h-12 mx-auto border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
           <div>
             <p className="text-amber-400 font-medium">
-              Processing 3D Analysis... (3D 动作分析中...)
+              Processing {filledCount >= 2 ? "3D" : ""} Analysis... (
+              {filledCount >= 2 ? "3D " : ""}动作分析中...)
             </p>
             <p className="text-xs text-slate-500 mt-1">
-              Running pose estimation on {filledCount} videos, triangulation, and biomechanical analysis
+              {effectiveMessage ||
+                `Running pose estimation on ${filledCount} videos and biomechanical analysis`}
             </p>
           </div>
+          {effectiveProgress > 0 && (
+            <>
+              <div className="w-full max-w-xs mx-auto bg-slate-800 rounded-full h-2 overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-amber-400 to-orange-500 rounded-full transition-all duration-300"
+                  style={{ width: `${effectiveProgress}%` }}
+                />
+              </div>
+              <p className="text-xs text-slate-500">{effectiveProgress}%</p>
+            </>
+          )}
           <div className="flex justify-center gap-2">
             <span className="w-2 h-2 rounded-full bg-amber-400 animate-bounce [animation-delay:0ms]" />
             <span className="w-2 h-2 rounded-full bg-amber-400 animate-bounce [animation-delay:150ms]" />
@@ -233,32 +347,60 @@ export function MultiVideoUploader({
       )}
 
       {/* Completed state */}
-      {upload.status === "completed" && (
+      {effectiveStatus === "completed" && (
         <div className="text-center space-y-2">
           <div className="w-12 h-12 mx-auto rounded-full bg-green-500/20 flex items-center justify-center">
-            <svg className="w-6 h-6 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            <svg
+              className="w-6 h-6 text-green-400"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M5 13l4 4L19 7"
+              />
             </svg>
           </div>
-          <p className="text-green-400 font-medium">3D Analysis Complete! (3D分析完成)</p>
+          <p className="text-green-400 font-medium">
+            {filledCount >= 2 ? "3D" : ""} Analysis Complete! (
+            {filledCount >= 2 ? "3D" : ""}分析完成)
+          </p>
         </div>
       )}
 
       {/* Error during upload/processing */}
-      {(upload.status === "error") && (
+      {effectiveStatus === "error" && (
         <div className="space-y-3 text-center">
           <div className="flex items-start gap-2 px-4 py-3 bg-red-500/10 border border-red-500/20 rounded-xl text-left">
             <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-            <p className="text-sm text-red-400">{upload.error || "Analysis failed (分析失败)"}</p>
+            <p className="text-sm text-red-400">
+              {upload.error || "Analysis failed (分析失败)"}
+            </p>
           </div>
           <button
             type="button"
-            onClick={() => resetUpload()}
+            onClick={() => {
+              clientAnalysis.reset();
+              resetUpload();
+            }}
             className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm transition-colors"
           >
             Try Again (重试)
           </button>
         </div>
+      )}
+
+      {/* Privacy notice — shown in production */}
+      {isProduction() && upload.status === "idle" && (
+        <p className="text-[10px] text-slate-600 text-center">
+          🔒 Videos stay on your device. Analysis runs in your browser. Nothing
+          is uploaded.
+          <br />
+          视频保留在设备上，分析在浏览器中完成，不进行上传。
+        </p>
       )}
     </div>
   );
@@ -301,8 +443,8 @@ function SlotCard({
         slot.file
           ? "border-emerald-500/50 bg-emerald-500/5"
           : slot.dragOver
-          ? "border-amber-400 bg-amber-500/5"
-          : "border-slate-700 hover:border-slate-500 bg-slate-900/30",
+            ? "border-amber-400 bg-amber-500/5"
+            : "border-slate-700 hover:border-slate-500 bg-slate-900/30",
         disabled && "opacity-60 pointer-events-none"
       )}
       onDragOver={(e) => {
@@ -319,6 +461,7 @@ function SlotCard({
         accept=".mp4,.mov"
         className="hidden"
         onChange={handleChange}
+        capture="environment"
       />
 
       {/* Remove button */}
