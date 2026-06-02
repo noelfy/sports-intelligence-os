@@ -50,6 +50,15 @@ def _get_feedback_service():
     return _feedback_service
 
 
+def _check_video_available():
+    """Return (available: bool, error_message: str)."""
+    try:
+        _get_pose_service()
+        return True, ""
+    except ImportError as e:
+        return False, f"Video processing unavailable on this server. Missing: {e}. Run locally for full functionality."
+
+
 def _validate_video(file: UploadFile) -> None:
     """Validate video file extension and size."""
     if not file.filename:
@@ -397,17 +406,10 @@ async def upload_multi_videos(
     background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db),
 ):
-    """Upload 2-4 synchronized videos for 3D motion capture analysis.
+    available, err = _check_video_available()
+    if not available:
+        raise HTTPException(status_code=503, detail=err)
 
-    Each video represents one camera angle. Videos should be recorded
-    simultaneously from different viewpoints for accurate 3D reconstruction.
-
-    Optional calibration_session_id enables calibrated 3D triangulation.
-    Without it, a basic 3D reconstruction is still performed using identity
-    camera matrices — less accurate but works for casual use.
-
-    Optional exercise_id enables exercise-specific feedback.
-    """
     # Validate camera count (1 = monocular 3D, 2-4 = triangulated 3D)
     if len(videos) > settings.MAX_CAMERAS:
         raise HTTPException(
@@ -493,6 +495,10 @@ async def upload_video(
 
     Optional exercise_id enables exercise-specific feedback (e.g. "barbell-squats").
     """
+    available, err = _check_video_available()
+    if not available:
+        raise HTTPException(status_code=503, detail=err)
+
     _validate_video(video)
 
     analysis_id = str(uuid.uuid4())

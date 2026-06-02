@@ -1,0 +1,4 @@
+# Render deployment requirements (no MediaPipe/OpenCV — too heavy for free tier)
+# Full video processing runs locally. API endpoints work on Render.
+-r backend/requirements.txt
+-r analysis_engine/requirements.txt
