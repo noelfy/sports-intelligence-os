@@ -31,7 +31,12 @@
       "Bash(cp design/*.md ~/.claude/agents/)",
       "Read(//c/Users/noelf/.claude/agents/**)",
       "Bash(ssh -o ConnectTimeout=5 -T git@github.com)",
-      "Bash(echo \"exit: $?\")"
+      "Bash(echo \"exit: $?\")",
+      "Bash(rm -rf \"D:\\\\neurovolley-api-deploy\")",
+      "Bash(mkdir \"D:\\\\neurovolley-api-deploy\")",
+      "Bash(echo '{\"functions\":{\"api/index.py\":{\"runtime\":\"@vercel/python\"}},\"rewrites\":[{\"source\":\"/\\(.*\\)\",\"destination\":\"/api/index\"}]}')",
+      "Bash(cp \"D:\\\\运动能力开发/requirements-vercel.txt\" \"D:\\\\neurovolley-api-deploy/requirements.txt\")",
+      "Bash(mkdir \"D:\\\\neurovolley-api-deploy/api\")"
     ]
   }
 }

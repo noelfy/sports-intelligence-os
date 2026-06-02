@@ -2,31 +2,30 @@ import { createAnalysis, updateAnalysis } from "@/lib/api-store";
 
 export async function POST(req: Request) {
   try {
-    const formData = await req.formData();
-    const video = formData.get("video") as File | null;
-    const exerciseId = formData.get("exercise_id") as string | null;
-
-    if (!video) {
-      return Response.json(
-        { detail: "No video file provided (请上传视频文件)" },
-        { status: 400 }
-      );
-    }
-
-    // Validate file type
-    const ext = video.name.split(".").pop()?.toLowerCase();
-    if (!ext || !["mp4", "mov"].includes(ext)) {
-      return Response.json(
-        {
-          detail:
-            "Only MP4 and MOV files are supported (仅支持 MP4 或 MOV 格式)",
-        },
-        { status: 400 }
-      );
-    }
-
-    // Extract user ID from auth header if present
+    let filename = "video.mp4";
+    let exerciseId: string | null = null;
     let userId: string | null = null;
+
+    // Try JSON first (Vercel-compatible demo mode — avoids 4.5MB body limit)
+    const contentType = req.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      const body = await req.json();
+      filename = body.filename || "video.mp4";
+      exerciseId = body.exercise_id || null;
+    } else {
+      // Multipart form data (works locally with Python backend proxy)
+      try {
+        const formData = await req.formData();
+        const video = formData.get("video") as File | null;
+        if (video) filename = video.name;
+        exerciseId = (formData.get("exercise_id") as string) || null;
+      } catch {
+        // Vercel body size limit hit — fall through to demo mode
+        console.warn("Upload: multipart parse failed, falling back to demo mode");
+      }
+    }
+
+    // Extract user ID from auth header
     const auth = req.headers.get("Authorization");
     if (auth?.startsWith("Bearer ")) {
       try {
@@ -35,16 +34,26 @@ export async function POST(req: Request) {
         );
         userId = payload.sub;
       } catch {
-        // ignore invalid token
+        // ignore
+      }
+    }
+
+    // Validate extension for demo mode (multipart already validated by frontend)
+    if (contentType.includes("application/json")) {
+      const ext = filename.split(".").pop()?.toLowerCase();
+      if (!ext || !["mp4", "mov"].includes(ext)) {
+        return Response.json(
+          { detail: "Only MP4 and MOV files are supported (仅支持 MP4 或 MOV 格式)" },
+          { status: 400 }
+        );
       }
     }
 
     // Create analysis record
     const sportType = exerciseId || "general";
-    const analysis = createAnalysis(userId, video.name, sportType);
+    const analysis = createAnalysis(userId, filename, sportType);
 
-    // Simulate processing → complete (no Python backend on Vercel)
-    // In production, connect to a real Python backend or Vercel Queues
+    // Simulate processing → completed after 3s (no Python backend on Vercel)
     setTimeout(() => {
       const overallScore = Math.round(60 + Math.random() * 35);
       updateAnalysis(analysis.id, {
@@ -102,10 +111,7 @@ function buildFeedback(score: number, _sportType: string) {
     return {
       summary:
         "Decent form overall. A few areas need attention to reach the next level.",
-      strengths: [
-        "Consistent movement rhythm",
-        "Good body awareness",
-      ],
+      strengths: ["Consistent movement rhythm", "Good body awareness"],
       improvements: [
         "Work on joint alignment — knees should track over toes",
         "Maintain a more neutral spine during the movement",
@@ -124,9 +130,7 @@ function buildFeedback(score: number, _sportType: string) {
   return {
     summary:
       "Several form issues detected. Focus on the fundamentals before increasing weight.",
-    strengths: [
-      "You completed the movement",
-    ],
+    strengths: ["You completed the movement"],
     improvements: [
       "Keep knees aligned with toes — avoid knee valgus",
       "Maintain a neutral spine — avoid rounding your lower back",

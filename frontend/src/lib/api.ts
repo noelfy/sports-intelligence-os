@@ -25,18 +25,33 @@ api.interceptors.request.use((config) => {
 
 // === Upload ===
 
+function isProduction(): boolean {
+  if (typeof window === "undefined") return false;
+  return !window.location.hostname.includes("localhost") && !window.location.hostname.includes("127.0.0.1");
+}
+
 export async function uploadVideo(
   file: File,
   exerciseId?: string,
   onProgress?: (pct: number) => void
 ): Promise<{ analysis_id: string; status: string; message: string }> {
+  if (isProduction()) {
+    // In production (Vercel), send JSON to avoid 4.5MB body size limit.
+    // Real video processing requires the Python backend running locally.
+    const { data } = await api.post("/upload", {
+      filename: file.name,
+      exercise_id: exerciseId || null,
+    });
+    return data;
+  }
+
+  // In development: send actual file via multipart (proxied to Python backend)
   const formData = new FormData();
   formData.append("video", file);
   if (exerciseId) {
     formData.append("exercise_id", exerciseId);
   }
   const { data } = await api.post("/upload", formData, {
-    // Let axios set Content-Type automatically with boundary for multipart
     onUploadProgress: (e) => {
       if (e.total && onProgress) {
         onProgress(Math.round((e.loaded / e.total) * 100));
@@ -61,6 +76,17 @@ export async function uploadMultiVideos(
   exerciseId?: string,
   onProgress?: (pct: number) => void
 ): Promise<MultiUploadResult> {
+  if (isProduction()) {
+    // In production (Vercel), send JSON to avoid 4.5MB body size limit
+    const { data } = await api.post("/upload/multi", {
+      filenames: files.map((f) => f.name),
+      camera_count: files.length,
+      calibration_session_id: calibrationSessionId || null,
+      exercise_id: exerciseId || null,
+    });
+    return data;
+  }
+
   const formData = new FormData();
   files.forEach((file) => {
     formData.append("videos", file);
