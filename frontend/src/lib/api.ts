@@ -1,7 +1,11 @@
 import axios from "axios";
 import type { AnalysisResult, HistoryItem } from "@/types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+// In production: API routes are served by Next.js on the same origin
+// In development: proxy to Python backend
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || (
+  typeof window !== "undefined" ? "/api" : "http://localhost:8000/api"
+);
 
 const api = axios.create({
   baseURL: API_BASE,
