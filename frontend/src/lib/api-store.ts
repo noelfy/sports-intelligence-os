@@ -10,7 +10,7 @@ interface User {
   password: string; // plain text for demo only!
 }
 
-interface Analysis {
+export interface Analysis {
   id: string;
   user_id: string | null;
   sport_type: string;
@@ -19,6 +19,9 @@ interface Analysis {
   overall_score: number | null;
   metrics: Record<string, number> | null;
   feedback: Record<string, unknown> | null;
+  capture_mode: string | null;
+  is_3d: boolean;
+  camera_count: number;
   created_at: string;
   completed_at: string | null;
 }
@@ -62,21 +65,36 @@ export function findUserByEmail(email: string): User | undefined {
 export function createAnalysis(
   userId: string | null,
   filename: string,
-  sportType: string = "general"
+  sportType: string = "general",
+  is3d: boolean = false,
+  cameraCount: number = 1
 ): Analysis {
   const analysis: Analysis = {
     id: crypto.randomUUID(),
     user_id: userId,
     sport_type: sportType,
-    status: "pending",
+    status: "processing",
     video_filename: filename,
     overall_score: null,
     metrics: null,
     feedback: null,
+    capture_mode: is3d ? "3d" : "2d",
+    is_3d: is3d,
+    camera_count: cameraCount,
     created_at: new Date().toISOString(),
     completed_at: null,
   };
   store.analyses.push(analysis);
+  return analysis;
+}
+
+export function updateAnalysis(
+  id: string,
+  updates: Partial<Analysis>
+): Analysis | undefined {
+  const analysis = store.analyses.find((a) => a.id === id);
+  if (!analysis) return undefined;
+  Object.assign(analysis, updates);
   return analysis;
 }
 
