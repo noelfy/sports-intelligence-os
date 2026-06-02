@@ -26,6 +26,8 @@ async def lifespan(app: FastAPI):
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     os.makedirs(settings.OUTPUT_DIR, exist_ok=True)
     os.makedirs(settings.STATIC_DIR, exist_ok=True)
+    os.makedirs(settings.CALIBRATION_DIR, exist_ok=True)
+    os.makedirs(settings.RECORDING_DIR, exist_ok=True)
     init_db()
     yield
     # Shutdown: cleanup (if needed)
@@ -48,13 +50,15 @@ app.add_middleware(
 )
 
 # Import and include routers
-from backend.routes import upload, results, files, auth, history
+from backend.routes import upload, results, files, auth, history, calibration, recording
 
 app.include_router(upload.router, prefix="/api", tags=["upload"])
 app.include_router(results.router, prefix="/api", tags=["results"])
 app.include_router(files.router, prefix="/api", tags=["files"])
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(history.router, prefix="/api", tags=["history"])
+app.include_router(calibration.router, prefix="/api", tags=["calibration"])
+app.include_router(recording.router, prefix="/api", tags=["recording"])
 
 
 @app.get("/api/health")

@@ -1,7 +1,7 @@
 """
 Feedback service — bridges FastAPI to the AI feedback generator.
 
-Generates LLM-powered coaching feedback from analysis results.
+Generates coaching feedback from biomechanical observations.
 """
 
 import json
@@ -13,7 +13,7 @@ from analysis_engine.feedback_generator import FeedbackGenerator
 
 
 class FeedbackService:
-    """Generates AI-powered sports feedback from analysis data."""
+    """Generates coaching feedback from movement analysis."""
 
     def __init__(self):
         self.generator = FeedbackGenerator(
@@ -21,14 +21,18 @@ class FeedbackService:
             model=settings.OPENAI_MODEL,
         )
 
-    async def generate(self, analysis_id: str) -> dict:
-        """Generate AI feedback for a completed analysis.
+    async def generate(self, analysis_id: str, exercise_id: str | None = None) -> dict:
+        """Generate coaching feedback for a completed analysis.
 
         Args:
             analysis_id: Unique analysis ID.
+            exercise_id: Optional exercise ID for exercise-specific feedback
+                         (e.g. "barbell-squats"). Loads correct form cues,
+                         common mistakes, and coaching cues from exercise_context.
 
         Returns:
-            Structured feedback dict.
+            Structured feedback dict with summary, strengths, improvements,
+            and detailed_feedback.
         """
         analysis_path = os.path.join(
             "data", "output", analysis_id, "analysis.json"
@@ -40,16 +44,27 @@ class FeedbackService:
         with open(analysis_path, encoding="utf-8") as f:
             analysis_data = json.load(f)
 
-        metrics = {
-            "overall_score": analysis_data.get("overall_score", 50),
-            "level": analysis_data.get("level", "Unknown"),
-            "metric_breakdown": analysis_data.get("metric_breakdown", {}),
-        }
+        # Load exercise context for exercise-specific feedback
+        exercise_ctx = None
+        if exercise_id:
+            try:
+                from backend.services.exercise_context import get_exercise_context
+                ctx = get_exercise_context(exercise_id)
+                exercise_ctx = {
+                    "exercise_name": ctx.exercise_name,
+                    "category": ctx.category,
+                    "correct_form": ctx.correct_form,
+                    "common_mistakes": ctx.common_mistakes,
+                    "coaching_cues": ctx.coaching_cues,
+                    "phase_names": ctx.phase_names,
+                    "primary_joints": ctx.primary_joints,
+                }
+            except ImportError:
+                pass  # exercise_context module not available, use generic feedback
 
-        # Run API call in thread pool
         loop = asyncio.get_event_loop()
         feedback = await loop.run_in_executor(
-            None, self.generator.generate, metrics, analysis_data
+            None, self.generator.generate, analysis_data, exercise_ctx
         )
 
         # Save feedback

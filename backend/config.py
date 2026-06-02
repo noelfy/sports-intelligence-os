@@ -40,6 +40,15 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_MB: int = 500
     ALLOWED_VIDEO_EXTENSIONS: list[str] = [".mp4", ".mov"]
 
+    # Calibration (ChArUco board)
+    CALIBRATION_DIR: str = "data/calibration"
+    RECORDING_DIR: str = "data/recordings"
+    BOARD_SQUARES_X: int = 7
+    BOARD_SQUARES_Y: int = 5
+    BOARD_SQUARE_SIZE_MM: float = 30.0
+    BOARD_MARKER_SIZE_MM: float = 22.5
+    MAX_CAMERAS: int = 4
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

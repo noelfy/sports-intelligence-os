@@ -12,11 +12,11 @@ export function Navbar() {
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
           <Link href="/" className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-sky-400 to-purple-500 flex items-center justify-center">
-              <span className="text-white font-bold text-sm">N</span>
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center">
+              <span className="text-white font-bold text-sm">FF</span>
             </div>
-            <span className="gradient-text text-xl font-bold tracking-tight">
-              NeuroVolley AI
+            <span className="gradient-text-amber text-xl font-bold tracking-tight">
+              FitForge
             </span>
           </Link>
 
@@ -28,6 +28,20 @@ export function Navbar() {
             >
               Home
             </Link>
+            <Link
+              href="/explore"
+              className="text-sm text-slate-400 hover:text-white transition-colors"
+            >
+              Explore
+            </Link>
+            {user && (
+              <Link
+                href="/upload"
+                className="text-sm text-amber-400 hover:text-amber-300 transition-colors font-medium"
+              >
+                Analyze
+              </Link>
+            )}
             {user && (
               <Link
                 href="/history"
@@ -57,7 +71,7 @@ export function Navbar() {
                 </Link>
                 <Link
                   href="/auth/register"
-                  className="text-sm px-4 py-1.5 rounded-full bg-sky-500/10 border border-sky-500/30 text-sky-400 hover:bg-sky-500/20 transition-colors"
+                  className="text-sm px-4 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 hover:bg-amber-500/20 transition-colors"
                 >
                   Register
                 </Link>

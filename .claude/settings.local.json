@@ -7,7 +7,31 @@
       "Bash(ssh -T git@github.com)",
       "Bash(npx skills *)",
       "Bash(npx skills@latest *)",
-      "Bash(npm --version)"
+      "Bash(npm --version)",
+      "Bash(./venv/Scripts/python -c \"from backend.main import app; print\\('Imports OK'\\)\")",
+      "Bash(PYTHONPATH=. ./venv/Scripts/uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000)",
+      "Bash(curl -s http://localhost:8000/api/health)",
+      "Bash(curl -s -X POST http://localhost:8000/api/upload -F video=@c:/Users/noelf/Desktop/video.mp4)",
+      "Bash(curl -s http://localhost:8000/api/results/4a95886d-6e8a-4698-9288-35f1c9654b68)",
+      "Bash(./venv/Scripts/python -c \"import os; path = os.path.join\\(os.path.dirname\\(__import__\\('mediapipe'\\).__file__\\), 'modules'\\); print\\(path\\); print\\(os.listdir\\(path\\)\\)\")",
+      "Bash(./venv/Scripts/python -c ' *)",
+      "Bash(mkdir -p /c/Users/noelf/.mediapipe_patch/mediapipe)",
+      "Bash(cp -r \"D:\\\\运动能力开发\\\\venv\\\\lib\\\\site-packages\\\\mediapipe\\\\modules\" /c/Users/noelf/.mediapipe_patch/mediapipe/)",
+      "Read(//c/Users/noelf/.mediapipe_patch/mediapipe/**)",
+      "Bash(curl -s http://localhost:8000/api/results/afaf888d-f63d-4588-8ca8-55924da762ff)",
+      "Bash(curl -s http://localhost:3000)",
+      "Bash(npm run *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000)",
+      "Bash(./venv/Scripts/python -c \"import os; d='frontend/node_modules/next/dist/docs'; print\\(os.listdir\\(d\\) if os.path.exists\\(d\\) else 'NOT FOUND'\\)\")",
+      "Bash(curl *)",
+      "Bash(ffmpeg -version)",
+      "Bash(./venv/Scripts/pip install *)",
+      "WebFetch(domain:github.com)",
+      "Bash(cp engineering/*.md ~/.claude/agents/)",
+      "Bash(cp design/*.md ~/.claude/agents/)",
+      "Read(//c/Users/noelf/.claude/agents/**)",
+      "Bash(ssh -o ConnectTimeout=5 -T git@github.com)",
+      "Bash(echo \"exit: $?\")"
     ]
   }
 }

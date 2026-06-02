@@ -17,6 +17,7 @@ interface AppStore {
 
 const initialUpload: UploadState = {
   file: null,
+  files: [],
   progress: 0,
   status: "idle",
   analysisId: null,

@@ -28,6 +28,8 @@ class AnalysisResult(BaseModel):
     """Complete analysis result after processing."""
     analysis_id: str
     status: str
+    sport_type: str = "general"
+    overall_score: float | None = None
     video_url: str
     overlay_url: str
     keypoints_url: str
@@ -45,6 +47,15 @@ class AnalysisSummary(BaseModel):
     video_filename: str
     overall_score: float | None = None
     created_at: datetime | None = None
+
+
+class MultiUploadResponse(BaseModel):
+    """Response returned immediately after multi-video upload."""
+    analysis_id: str
+    status: str = "pending"
+    camera_count: int
+    message: str
+    created_at: datetime
 
 
 class PaginatedResults(BaseModel):

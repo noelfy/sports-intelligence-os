@@ -16,17 +16,20 @@ class StorageService:
     def save_upload(analysis_id: str, file_bytes: bytes, filename: str) -> str:
         """Save an uploaded video file to disk.
 
+        Always saves as 'original.mp4' for consistent downstream access.
+
         Args:
             analysis_id: Unique analysis ID.
             file_bytes: Raw file content.
-            filename: Original filename.
+            filename: Original filename (used only for extension detection).
 
         Returns:
             Path to the saved file.
         """
         dir_path = os.path.join(settings.UPLOAD_DIR, analysis_id)
         os.makedirs(dir_path, exist_ok=True)
-        file_path = os.path.join(dir_path, filename)
+        # Always save as original.mp4 for consistent references
+        file_path = os.path.join(dir_path, "original.mp4")
         with open(file_path, "wb") as f:
             f.write(file_bytes)
         return file_path

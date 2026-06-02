@@ -148,7 +148,8 @@ class SkeletonRenderer:
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        # Use H.264 codec if available, fallback to mp4v
+        # Use mp4v codec (MPEG-4 Part 2). Reliable cross-platform.
+        # For browser playback, a post-processing step converts to H.264.
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 

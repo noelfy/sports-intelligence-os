@@ -1,12 +1,9 @@
 """
-Movement quality analyzer.
+Movement quality analyzer — exercise-aware biomechanical metrics.
 
-Computes five biomechanical metrics from time-series keypoint data:
-- Balance: Center of mass stability
-- Posture: Shoulder symmetry and trunk alignment
-- Timing: Movement phase rhythm consistency
-- Efficiency: Movement smoothness (jerk minimization)
-- Coordination: Multi-joint synchronization
+Computes raw biomechanical measurements from time-series keypoint data.
+Each exercise category gets its own relevant metrics, reflecting what
+actually matters for that movement pattern.
 """
 
 import numpy as np
@@ -17,12 +14,13 @@ from pose_estimation.landmark_definitions import (
     LEFT_WRIST, RIGHT_WRIST,
     LEFT_HIP, RIGHT_HIP,
     LEFT_KNEE, RIGHT_KNEE,
+    LEFT_ANKLE, RIGHT_ANKLE,
     LEFT_ELBOW, RIGHT_ELBOW,
 )
 
 
 def _get_landmark(frame: dict, idx: int) -> np.ndarray | None:
-    """Safely extract a landmark position from a frame."""
+    """Safely extract a 2D landmark position from a frame."""
     if not frame.get("detected") or not frame.get("landmarks"):
         return None
     lms = frame["landmarks"]
@@ -32,207 +30,644 @@ def _get_landmark(frame: dict, idx: int) -> np.ndarray | None:
     return np.array([lm["x"], lm["y"]])
 
 
-class MovementAnalyzer:
-    """Computes movement quality metrics from pose keypoint sequences."""
+def _get_landmark_3d(frame: dict, idx: int) -> np.ndarray | None:
+    """Safely extract a 3D landmark position from a frame."""
+    if not frame.get("detected") or not frame.get("landmarks"):
+        return None
+    lms = frame["landmarks"]
+    if idx >= len(lms):
+        return None
+    lm = lms[idx]
+    return np.array([lm["x"], lm.get("y", 0), lm.get("z", 0)])
 
-    def analyze(self, frames_data: list[dict]) -> dict[str, float]:
-        """Compute all five quality metrics for a movement sequence.
+
+def _midpoint(a: np.ndarray | None, b: np.ndarray | None) -> np.ndarray | None:
+    """Compute midpoint of two points."""
+    if a is None or b is None:
+        return None
+    return (a + b) / 2
+
+
+class MovementAnalyzer:
+    """Computes exercise-category-aware biomechanical measurements.
+
+    Instead of computing the same 6 generic metrics for every exercise,
+    this computes only the metrics that matter for each movement category.
+    """
+
+    def __init__(self):
+        self._lm = _get_landmark  # default to 2D extraction
+
+    def analyze(self, frames_data: list[dict], category: str = "general",
+                primary_joints: list[str] | None = None,
+                use_3d: bool = False) -> dict[str, float]:
+        """Compute biomechanical measurements for a movement sequence.
 
         Args:
-            frames_data: List of per-frame data dicts with landmarks.
-
-        Returns:
-            Dict with keys: balance, posture, timing, efficiency, coordination.
-            Each value is a score from 0-100 (higher = better).
+            frames_data: List of per-frame landmark dicts.
+            category: Exercise category (squat, hinge, push, pull, etc.).
+            primary_joints: Joint names to focus on for isolation exercises.
+            use_3d: If True, use 3D world coordinates for all computations.
         """
-        # Filter to frames with detected poses
         valid_frames = [f for f in frames_data if f.get("detected")]
 
         if len(valid_frames) < 2:
-            return {
-                "balance": 50,
-                "posture": 50,
-                "timing": 50,
-                "efficiency": 50,
-                "coordination": 50,
-            }
+            return {"error": "insufficient_frames", "frame_count": len(valid_frames)}
 
+        # Select landmark extractor
+        self._lm = _get_landmark_3d if use_3d else _get_landmark
+
+        # Universal metrics
         metrics = {
-            "balance": self._compute_balance(valid_frames),
-            "posture": self._compute_posture(valid_frames),
-            "timing": self._compute_timing(valid_frames),
-            "efficiency": self._compute_efficiency(valid_frames),
-            "coordination": self._compute_coordination(valid_frames),
+            "frame_count": len(valid_frames),
+            "dimensions": 3 if use_3d else 2,
+            "balance_std": self._measure_balance(valid_frames),
+            "shoulder_symmetry": self._measure_shoulder_symmetry(valid_frames),
         }
 
-        # Clamp all values to 0-100
-        return {k: max(0.0, min(100.0, round(v, 1))) for k, v in metrics.items()}
+        # Category-specific metrics
+        if category == "squat":
+            metrics.update(self._analyze_squat(valid_frames))
+        elif category == "hinge":
+            metrics.update(self._analyze_hinge(valid_frames))
+        elif category == "push":
+            metrics.update(self._analyze_push(valid_frames))
+        elif category == "pull":
+            metrics.update(self._analyze_pull(valid_frames))
+        elif category == "core":
+            metrics.update(self._analyze_core(valid_frames))
+        elif category == "carry":
+            metrics.update(self._analyze_carry(valid_frames))
+        elif category == "isolation":
+            metrics.update(self._analyze_isolation(valid_frames, primary_joints or []))
+        else:
+            metrics.update(self._analyze_general(valid_frames))
 
-    def _compute_balance(self, frames: list[dict]) -> float:
-        """Balance score based on center-of-mass lateral stability.
+        # Add 3D-specific metrics if applicable
+        if use_3d:
+            try:
+                from analysis_engine.metrics_3d import ThreeDMetrics
+                metrics.update(self._compute_3d_metrics(
+                    valid_frames, category, ThreeDMetrics
+                ))
+            except ImportError:
+                pass
 
-        Lower std of CoM x-position = more stable = higher score.
-        """
-        com_x_positions = []
+        return metrics
+
+    def _compute_3d_metrics(self, frames: list[dict], category: str,
+                             metrics_3d) -> dict:
+        """Compute additional metrics only available with 3D data."""
+        result = {}
+
+        # Extract hip midpoint Y (vertical) trajectory for jump height
+        hip_y = []
+        left_hip_z = []
+        right_hip_z = []
+        shoulder_x = []
+        hip_x = []
+        left_wrist_3d = []
+        right_wrist_3d = []
+
+        # Collect key trajectories
         for f in frames:
-            left_hip = _get_landmark(f, LEFT_HIP)
-            right_hip = _get_landmark(f, RIGHT_HIP)
-            if left_hip is not None and right_hip is not None:
-                com_x = (left_hip[0] + right_hip[0]) / 2
-                com_x_positions.append(com_x)
+            lh = _get_landmark_3d(f, LEFT_HIP)
+            rh = _get_landmark_3d(f, RIGHT_HIP)
+            ls = _get_landmark_3d(f, LEFT_SHOULDER)
+            rs = _get_landmark_3d(f, RIGHT_SHOULDER)
+            lw = _get_landmark_3d(f, LEFT_WRIST)
+            rw = _get_landmark_3d(f, RIGHT_WRIST)
 
-        if len(com_x_positions) < 2:
-            return 50.0
+            if lh is not None and rh is not None:
+                hip_y.append((lh[1] + rh[1]) / 2)
+                left_hip_z.append(lh[2])
+                right_hip_z.append(rh[2])
+                # For lateral flexion: shoulder and hip X (left-right)
+                shoulder_x.append((ls[0] + rs[0]) / 2 if ls is not None and rs is not None else 0)
+                hip_x.append((lh[0] + rh[0]) / 2)
 
-        std_x = float(np.std(com_x_positions))
-        # Normalize: typical std range is 0-0.1 for stable movements
-        score = 100 * (1.0 - min(std_x / 0.08, 1.0))
-        return score
-
-    def _compute_posture(self, frames: list[dict]) -> float:
-        """Posture score based on shoulder symmetry and trunk alignment."""
-        shoulder_sym_scores = []
-        trunk_scores = []
-
-        for f in frames:
-            left_shoulder = _get_landmark(f, LEFT_SHOULDER)
-            right_shoulder = _get_landmark(f, RIGHT_SHOULDER)
-            left_hip = _get_landmark(f, LEFT_HIP)
-            right_hip = _get_landmark(f, RIGHT_HIP)
-
-            if all(x is not None for x in [left_shoulder, right_shoulder, left_hip, right_hip]):
-                # Shoulder height symmetry
-                shoulder_diff = abs(left_shoulder[1] - right_shoulder[1])
-                shoulder_span = abs(left_shoulder[0] - right_shoulder[0]) + 1e-8
-                shoulder_sym = 1.0 - min(shoulder_diff / (shoulder_span * 0.1), 1.0)
-                shoulder_sym_scores.append(shoulder_sym)
-
-                # Trunk inclination from vertical
-                mid_shoulder = (left_shoulder + right_shoulder) / 2
-                mid_hip = (left_hip + right_hip) / 2
-                trunk_vector = mid_shoulder - mid_hip
-                trunk_angle = abs(np.degrees(np.arctan2(
-                    trunk_vector[0], -trunk_vector[1]
-                )))
-                trunk_score = max(0, 1.0 - trunk_angle / 30.0)
-                trunk_scores.append(trunk_score)
-
-        if not shoulder_sym_scores:
-            return 50.0
-
-        avg_sym = np.mean(shoulder_sym_scores)
-        avg_trunk = np.mean(trunk_scores) if trunk_scores else 0.5
-        return 100 * (0.5 * avg_sym + 0.5 * avg_trunk)
-
-    def _compute_timing(self, frames: list[dict]) -> float:
-        """Timing score based on consistency of movement rhythm.
-
-        Measures how smoothly the wrist trajectory changes over time.
-        """
-        right_wrist_y = []
-        for f in frames:
-            rw = _get_landmark(f, RIGHT_WRIST)
+            if lw is not None:
+                left_wrist_3d.append(lw)
             if rw is not None:
-                right_wrist_y.append(rw[1])
+                right_wrist_3d.append(rw)
 
-        if len(right_wrist_y) < 5:
-            return 50.0
+        # Jump height (squat, hinge, volleyball)
+        if category in ("squat", "hinge") and hip_y:
+            jh = metrics_3d.jump_height(hip_y, 30.0)
+            result["jump_height_cm"] = jh["jump_height_cm"]
+            result["flight_time_ms"] = jh["flight_time_ms"]
 
-        # Compute velocity profile
-        velocities = np.diff(right_wrist_y)
-        if len(velocities) < 2:
-            return 50.0
+        # Pelvis rotation
+        if left_hip_z and right_hip_z:
+            pr = metrics_3d.pelvis_rotation(left_hip_z, right_hip_z)
+            result["pelvis_rotation_mean_deg"] = pr["pelvis_rotation_mean_deg"]
 
-        # Timing is good when velocity changes are smooth (low acceleration variance)
-        accelerations = np.diff(velocities)
-        accel_std = float(np.std(accelerations))
-        accel_range = float(np.max(np.abs(accelerations))) + 1e-8
+        # Lateral flexion
+        if shoulder_x and hip_x:
+            lf = metrics_3d.lateral_flexion(shoulder_x, hip_x)
+            result["lateral_flexion_mean_deg"] = lf["lateral_flexion_mean_deg"]
 
-        # Coefficient of variation of acceleration
-        cv = accel_std / accel_range if accel_range > 0 else 0
-        score = 100 * (1.0 - min(cv / 0.5, 1.0))
-        return score
+        # Wrist velocity (for throwing/striking sports)
+        if left_wrist_3d or right_wrist_3d:
+            dominant = right_wrist_3d if right_wrist_3d else left_wrist_3d
+            if len(dominant) > 5:
+                vel = metrics_3d.movement_velocity_3d(
+                    np.array(dominant), 30.0
+                )
+                result["wrist_peak_velocity_ms"] = vel["peak_velocity_ms"]
 
-    def _compute_efficiency(self, frames: list[dict]) -> float:
-        """Efficiency score based on movement smoothness (jerk).
+        return result
 
-        Lower jerk (3rd derivative of position) = smoother = more efficient.
-        """
-        right_wrist_x, right_wrist_y = [], []
+    # ═══════════════════════════════════════════════════════════════
+    # UNIVERSAL
+    # ═══════════════════════════════════════════════════════════════
+
+    def _measure_balance(self, frames: list[dict]) -> float:
+        com_x = []
         for f in frames:
-            rw = _get_landmark(f, RIGHT_WRIST)
-            if rw is not None:
-                right_wrist_x.append(rw[0])
-                right_wrist_y.append(rw[1])
+            lh = self._lm(f, LEFT_HIP)
+            rh = self._lm(f, RIGHT_HIP)
+            if lh is not None and rh is not None:
+                com_x.append((lh[0] + rh[0]) / 2)
+        if len(com_x) < 2:
+            return 0.0
+        return round(float(np.std(com_x)), 4)
 
-        min_len = 10
-        if len(right_wrist_x) < min_len:
-            return 50.0
+    def _measure_shoulder_symmetry(self, frames: list[dict]) -> float:
+        diffs = []
+        for f in frames:
+            ls = self._lm(f, LEFT_SHOULDER)
+            rs = self._lm(f, RIGHT_SHOULDER)
+            if ls is not None and rs is not None:
+                span = abs(ls[0] - rs[0]) + 1e-8
+                diffs.append(abs(ls[1] - rs[1]) / span)
+        if not diffs:
+            return 0.0
+        return round(float(np.mean(diffs)), 4)
 
-        # Apply Savitzky-Golay filter to smooth, then compute 3rd derivative
-        try:
-            if len(right_wrist_x) >= 11:
-                filtered_x = signal.savgol_filter(right_wrist_x, 11, 3)
-                filtered_y = signal.savgol_filter(right_wrist_y, 11, 3)
+    # ═══════════════════════════════════════════════════════════════
+    # SQUAT
+    # ═══════════════════════════════════════════════════════════════
+
+    def _analyze_squat(self, frames: list[dict]) -> dict:
+        left_knee_angles, right_knee_angles = [], []
+        left_hip_angles, right_hip_angles = [], []
+        trunk_angles, knee_valgus_series, ankle_x_series = [], [], []
+
+        for f in frames:
+            la = self._lm(f, LEFT_ANKLE)
+            lk = self._lm(f, LEFT_KNEE)
+            lh = self._lm(f, LEFT_HIP)
+            ls = self._lm(f, LEFT_SHOULDER)
+            ra = self._lm(f, RIGHT_ANKLE)
+            rk = self._lm(f, RIGHT_KNEE)
+            rh = self._lm(f, RIGHT_HIP)
+            rs = self._lm(f, RIGHT_SHOULDER)
+
+            if all(x is not None for x in [lh, lk, la]):
+                left_knee_angles.append(self._joint_angle(lh, lk, la))
+            if all(x is not None for x in [rh, rk, ra]):
+                right_knee_angles.append(self._joint_angle(rh, rk, ra))
+            if all(x is not None for x in [ls, lh, lk]):
+                left_hip_angles.append(self._joint_angle(ls, lh, lk))
+            if all(x is not None for x in [rs, rh, rk]):
+                right_hip_angles.append(self._joint_angle(rs, rh, rk))
+
+            ms = _midpoint(ls, rs)
+            mh = _midpoint(lh, rh)
+            if ms is not None and mh is not None:
+                trunk_vec = ms - mh
+                angle = abs(np.degrees(np.arctan2(trunk_vec[0], -trunk_vec[1])))
+                trunk_angles.append(angle)
+
+            if all(x is not None for x in [la, lk, lh]):
+                knee_valgus_series.append(lk[0] - (la[0] + lh[0]) / 2)
+            if all(x is not None for x in [ra, rk, rh]):
+                knee_valgus_series.append((ra[0] + rh[0]) / 2 - rk[0])
+
+            if la is not None:
+                ankle_x_series.append(la[0])
+
+        result = {}
+        if left_knee_angles and right_knee_angles:
+            all_knee = left_knee_angles + right_knee_angles
+            result["knee_angle_min"] = round(float(np.min(all_knee)), 1)
+            result["knee_angle_mean"] = round(float(np.mean(all_knee)), 1)
+            min_knee = result["knee_angle_min"]
+            if min_knee < 60:
+                result["depth_quality"] = "deep"
+            elif min_knee < 85:
+                result["depth_quality"] = "parallel"
+            elif min_knee < 100:
+                result["depth_quality"] = "above_parallel"
             else:
-                filtered_x = right_wrist_x
-                filtered_y = right_wrist_y
+                result["depth_quality"] = "shallow"
 
-            # Jerk = third derivative magnitude
-            jerk_x = np.abs(np.diff(filtered_x, n=3))
-            jerk_y = np.abs(np.diff(filtered_y, n=3))
-            jerk_mag = np.sqrt(jerk_x**2 + jerk_y**2)
-            avg_jerk = float(np.mean(jerk_mag))
+        if left_hip_angles and right_hip_angles:
+            all_hip = left_hip_angles + right_hip_angles
+            result["hip_angle_min"] = round(float(np.min(all_hip)), 1)
+            result["hip_angle_mean"] = round(float(np.mean(all_hip)), 1)
 
-            # Score: exponentially decay with increasing jerk
-            # Typical jerk range: 0.001 to 0.5 for normalized coordinates
-            score = 100 * np.exp(-avg_jerk * 15)
-            return score
+        if trunk_angles:
+            result["trunk_angle_mean"] = round(float(np.mean(trunk_angles)), 1)
+            result["trunk_angle_max"] = round(float(np.max(trunk_angles)), 1)
+            result["trunk_angle_min"] = round(float(np.min(trunk_angles)), 1)
 
-        except (ValueError, np.linalg.LinAlgError):
-            return 50.0
+        if knee_valgus_series:
+            avg_v = np.mean(np.abs(knee_valgus_series))
+            max_v = np.max(np.abs(knee_valgus_series))
+            result["knee_valgus_avg"] = round(float(avg_v), 4)
+            result["knee_valgus_max"] = round(float(max_v), 4)
+            if max_v > 0.06:
+                result["knee_valgus_severity"] = "significant"
+            elif max_v > 0.03:
+                result["knee_valgus_severity"] = "moderate"
+            else:
+                result["knee_valgus_severity"] = "minimal"
 
-    def _compute_coordination(self, frames: list[dict]) -> float:
-        """Coordination score based on arm-leg synchronization.
+        if left_knee_angles and right_knee_angles:
+            result["knee_asymmetry"] = round(
+                abs(np.mean(left_knee_angles) - np.mean(right_knee_angles)), 1)
 
-        Cross-correlates elbow and knee angle series.
-        """
-        elbow_series = []
-        knee_series = []
+        if ankle_x_series and len(ankle_x_series) > 5:
+            result["weight_stability"] = round(float(np.std(ankle_x_series)), 4)
+
+        return result
+
+    # ═══════════════════════════════════════════════════════════════
+    # HINGE
+    # ═══════════════════════════════════════════════════════════════
+
+    def _analyze_hinge(self, frames: list[dict]) -> dict:
+        hip_angles, trunk_angles, knee_angles = [], [], []
+        wrist_hip_distances, shoulder_hip_distances = [], []
 
         for f in frames:
-            left_elbow = _get_landmark(f, LEFT_ELBOW)
-            right_elbow = _get_landmark(f, RIGHT_ELBOW)
-            left_wrist = _get_landmark(f, LEFT_WRIST)
-            right_wrist = _get_landmark(f, RIGHT_WRIST)
-            left_hip = _get_landmark(f, LEFT_HIP)
-            right_hip = _get_landmark(f, RIGHT_HIP)
-            left_knee = _get_landmark(f, LEFT_KNEE)
-            right_knee = _get_landmark(f, RIGHT_KNEE)
+            ls = self._lm(f, LEFT_SHOULDER)
+            rs = self._lm(f, RIGHT_SHOULDER)
+            lh = self._lm(f, LEFT_HIP)
+            rh = self._lm(f, RIGHT_HIP)
+            lk = self._lm(f, LEFT_KNEE)
+            rk = self._lm(f, RIGHT_KNEE)
+            lw = self._lm(f, LEFT_WRIST)
+            rw = self._lm(f, RIGHT_WRIST)
+            la = self._lm(f, LEFT_ANKLE)
+            ra = self._lm(f, RIGHT_ANKLE)
 
-            if all(x is not None for x in [right_elbow, right_wrist, right_hip, right_knee]):
-                # Elbow extension (wrist-elbow distance as proportion of shoulder-elbow distance)
-                elbow_ext = np.linalg.norm(right_elbow - right_wrist)
-                elbow_series.append(elbow_ext)
+            ms = _midpoint(ls, rs)
+            mh = _midpoint(lh, rh)
+            mk = _midpoint(lk, rk)
+            mw = _midpoint(lw, rw)
 
-                # Knee angle proxy: hip-knee vs knee-ankle
-                knee_angle_proxy = abs(right_hip[1] - right_knee[1])
-                knee_series.append(knee_angle_proxy)
+            if ms is not None and mh is not None and mk is not None:
+                hip_angles.append(self._joint_angle(ms, mh, mk))
+            if ms is not None and mh is not None:
+                trunk_vec = ms - mh
+                angle = abs(np.degrees(np.arctan2(trunk_vec[0], -trunk_vec[1])))
+                trunk_angles.append(angle)
+            if all(x is not None for x in [lh, lk, la]):
+                knee_angles.append(self._joint_angle(lh, lk, la))
+            if all(x is not None for x in [rh, rk, ra]):
+                knee_angles.append(self._joint_angle(rh, rk, ra))
+            if mw is not None and mh is not None:
+                wrist_hip_distances.append(abs(mw[0] - mh[0]))
+            if ms is not None and mh is not None:
+                shoulder_hip_distances.append(np.linalg.norm(ms - mh))
 
-        if len(elbow_series) < 5 or len(knee_series) < 5:
-            return 50.0
+        result = {}
+        if hip_angles:
+            result["hip_angle_min"] = round(float(np.min(hip_angles)), 1)
+            result["hip_angle_mean"] = round(float(np.mean(hip_angles)), 1)
+            result["hip_angle_range"] = round(float(np.max(hip_angles) - np.min(hip_angles)), 1)
+        if trunk_angles:
+            result["trunk_angle_max"] = round(float(np.max(trunk_angles)), 1)
+            result["trunk_angle_mean"] = round(float(np.mean(trunk_angles)), 1)
+        if knee_angles:
+            result["knee_angle_mean"] = round(float(np.mean(knee_angles)), 1)
+            result["knee_bend_consistency"] = round(float(np.std(knee_angles)), 1)
+            knee_range = np.max(knee_angles) - np.min(knee_angles)
+            result["knee_angle_range"] = round(float(knee_range), 1)
+            if knee_range < 15:
+                result["knee_stability"] = "excellent"
+            elif knee_range < 30:
+                result["knee_stability"] = "good"
+            else:
+                result["knee_stability"] = "poor"
+        if wrist_hip_distances:
+            result["bar_body_distance"] = round(float(np.mean(wrist_hip_distances)), 4)
+            avg_dist = result["bar_body_distance"]
+            if avg_dist < 0.04:
+                result["bar_proximity"] = "excellent"
+            elif avg_dist < 0.08:
+                result["bar_proximity"] = "good"
+            else:
+                result["bar_proximity"] = "poor"
+        if shoulder_hip_distances and len(shoulder_hip_distances) > 2:
+            result["shoulder_hip_variation"] = round(float(np.std(shoulder_hip_distances)), 4)
 
-        # Ensure same length
-        min_len = min(len(elbow_series), len(knee_series))
-        elbow_series = elbow_series[:min_len]
-        knee_series = knee_series[:min_len]
+        return result
 
-        # Cross-correlation at zero lag
-        correlation = np.corrcoef(elbow_series, knee_series)[0, 1]
+    # ═══════════════════════════════════════════════════════════════
+    # PUSH
+    # ═══════════════════════════════════════════════════════════════
 
-        if np.isnan(correlation):
-            return 50.0
+    def _analyze_push(self, frames: list[dict]) -> dict:
+        elbow_angles, shoulder_angles = [], []
+        wrist_x_series, elbow_flare_series = [], []
 
-        # Absolute correlation: how well coordinated the movements are
-        score = 100 * abs(correlation)
-        return score
+        for f in frames:
+            ls = self._lm(f, LEFT_SHOULDER)
+            rs = self._lm(f, RIGHT_SHOULDER)
+            le = self._lm(f, LEFT_ELBOW)
+            re = self._lm(f, RIGHT_ELBOW)
+            lw = self._lm(f, LEFT_WRIST)
+            rw = self._lm(f, RIGHT_WRIST)
+            lh = self._lm(f, LEFT_HIP)
+            rh = self._lm(f, RIGHT_HIP)
+
+            if all(x is not None for x in [ls, le, lw]):
+                elbow_angles.append(self._joint_angle(ls, le, lw))
+            if all(x is not None for x in [rs, re, rw]):
+                elbow_angles.append(self._joint_angle(rs, re, rw))
+            if all(x is not None for x in [le, ls, lh]):
+                shoulder_angles.append(self._joint_angle(le, ls, lh))
+            if all(x is not None for x in [re, rs, rh]):
+                shoulder_angles.append(self._joint_angle(re, rs, rh))
+            if lw is not None:
+                wrist_x_series.append(lw[0])
+            if rw is not None:
+                wrist_x_series.append(rw[0])
+            if le is not None and ls is not None:
+                elbow_flare_series.append(abs(le[0] - ls[0]))
+            if re is not None and rs is not None:
+                elbow_flare_series.append(abs(re[0] - rs[0]))
+
+        result = {}
+        if elbow_angles:
+            result["elbow_angle_min"] = round(float(np.min(elbow_angles)), 1)
+            result["elbow_angle_max"] = round(float(np.max(elbow_angles)), 1)
+            result["elbow_angle_range"] = round(float(np.max(elbow_angles) - np.min(elbow_angles)), 1)
+        if shoulder_angles:
+            result["shoulder_abduction_mean"] = round(float(np.mean(shoulder_angles)), 1)
+            avg_abd = result["shoulder_abduction_mean"]
+            if avg_abd > 80:
+                result["elbow_flare_risk"] = "high"
+            elif avg_abd > 60:
+                result["elbow_flare_risk"] = "moderate"
+            else:
+                result["elbow_flare_risk"] = "low"
+        if wrist_x_series and len(wrist_x_series) > 5:
+            result["bar_path_std"] = round(float(np.std(wrist_x_series)), 4)
+            std_val = result["bar_path_std"]
+            if std_val < 0.02:
+                result["bar_path_quality"] = "excellent"
+            elif std_val < 0.05:
+                result["bar_path_quality"] = "good"
+            else:
+                result["bar_path_quality"] = "needs_work"
+        if elbow_flare_series and len(elbow_flare_series) > 3:
+            result["elbow_flare_consistency"] = round(float(np.std(elbow_flare_series)), 4)
+        if elbow_angles:
+            max_elbow = max(elbow_angles)
+            result["lockout_max_angle"] = round(float(max_elbow), 1)
+            if max_elbow > 160:
+                result["lockout_quality"] = "full"
+            elif max_elbow > 140:
+                result["lockout_quality"] = "partial"
+            else:
+                result["lockout_quality"] = "incomplete"
+
+        return result
+
+    # ═══════════════════════════════════════════════════════════════
+    # PULL
+    # ═══════════════════════════════════════════════════════════════
+
+    def _analyze_pull(self, frames: list[dict]) -> dict:
+        elbow_angles, shoulder_angles = [], []
+        body_swing_series, wrist_y_series = [], []
+
+        for f in frames:
+            ls = self._lm(f, LEFT_SHOULDER)
+            rs = self._lm(f, RIGHT_SHOULDER)
+            le = self._lm(f, LEFT_ELBOW)
+            re = self._lm(f, RIGHT_ELBOW)
+            lw = self._lm(f, LEFT_WRIST)
+            rw = self._lm(f, RIGHT_WRIST)
+            lh = self._lm(f, LEFT_HIP)
+            rh = self._lm(f, RIGHT_HIP)
+
+            if all(x is not None for x in [ls, le, lw]):
+                elbow_angles.append(self._joint_angle(ls, le, lw))
+            if all(x is not None for x in [rs, re, rw]):
+                elbow_angles.append(self._joint_angle(rs, re, rw))
+            if all(x is not None for x in [le, ls, lh]):
+                shoulder_angles.append(self._joint_angle(le, ls, lh))
+            mh = _midpoint(lh, rh)
+            if mh is not None:
+                body_swing_series.append(mh[0])
+            mw = _midpoint(lw, rw)
+            if mw is not None:
+                wrist_y_series.append(mw[1])
+
+        result = {}
+        if elbow_angles:
+            result["elbow_angle_max"] = round(float(np.max(elbow_angles)), 1)
+            result["elbow_angle_min"] = round(float(np.min(elbow_angles)), 1)
+            result["elbow_rom"] = round(float(np.max(elbow_angles) - np.min(elbow_angles)), 1)
+        if shoulder_angles:
+            result["shoulder_extension_max"] = round(float(np.max(shoulder_angles)), 1)
+        if body_swing_series and len(body_swing_series) > 5:
+            swing_std = float(np.std(body_swing_series))
+            result["body_swing_std"] = round(swing_std, 4)
+            if swing_std < 0.02:
+                result["body_stability"] = "excellent"
+            elif swing_std < 0.05:
+                result["body_stability"] = "moderate"
+            else:
+                result["body_stability"] = "excessive_swing"
+        if wrist_y_series and len(wrist_y_series) > 3:
+            result["wrist_y_rom"] = round(float(np.max(wrist_y_series) - np.min(wrist_y_series)), 4)
+        if shoulder_angles:
+            result["scapular_retraction_range"] = round(
+                float(np.max(shoulder_angles) - np.min(shoulder_angles)), 1)
+
+        return result
+
+    # ═══════════════════════════════════════════════════════════════
+    # CORE
+    # ═══════════════════════════════════════════════════════════════
+
+    def _analyze_core(self, frames: list[dict]) -> dict:
+        hip_y_series, shoulder_hip_angles, trunk_angles = [], [], []
+        for f in frames:
+            ls = self._lm(f, LEFT_SHOULDER)
+            rs = self._lm(f, RIGHT_SHOULDER)
+            lh = self._lm(f, LEFT_HIP)
+            rh = self._lm(f, RIGHT_HIP)
+            lk = self._lm(f, LEFT_KNEE)
+            rk = self._lm(f, RIGHT_KNEE)
+            mh = _midpoint(lh, rh)
+            if mh is not None:
+                hip_y_series.append(mh[1])
+            ms = _midpoint(ls, rs)
+            mk = _midpoint(lk, rk)
+            if ms is not None and mh is not None and mk is not None:
+                shoulder_hip_angles.append(self._joint_angle(ms, mh, mk))
+            if ms is not None and mh is not None:
+                trunk_vec = ms - mh
+                angle = abs(np.degrees(np.arctan2(trunk_vec[0], -trunk_vec[1])))
+                trunk_angles.append(angle)
+
+        result = {}
+        if hip_y_series and len(hip_y_series) > 5:
+            hip_sag = float(np.std(hip_y_series))
+            result["hip_sag_std"] = round(hip_sag, 4)
+            if hip_sag < 0.02:
+                result["core_stability"] = "excellent"
+            elif hip_sag < 0.05:
+                result["core_stability"] = "good"
+            else:
+                result["core_stability"] = "needs_work"
+        if shoulder_hip_angles:
+            result["body_line_angle"] = round(float(np.mean(shoulder_hip_angles)), 1)
+            body_line = result["body_line_angle"]
+            if body_line > 170:
+                result["body_line_quality"] = "excellent"
+            elif body_line > 155:
+                result["body_line_quality"] = "good"
+            else:
+                result["body_line_quality"] = "poor"
+        if trunk_angles:
+            result["trunk_angle_mean"] = round(float(np.mean(trunk_angles)), 1)
+            result["trunk_angle_std"] = round(float(np.std(trunk_angles)), 1)
+
+        return result
+
+    # ═══════════════════════════════════════════════════════════════
+    # CARRY
+    # ═══════════════════════════════════════════════════════════════
+
+    def _analyze_carry(self, frames: list[dict]) -> dict:
+        shoulder_y_series, hip_x_series, trunk_angles = [], [], []
+        for f in frames:
+            ls = self._lm(f, LEFT_SHOULDER)
+            rs = self._lm(f, RIGHT_SHOULDER)
+            lh = self._lm(f, LEFT_HIP)
+            rh = self._lm(f, RIGHT_HIP)
+            if ls is not None:
+                shoulder_y_series.append(ls[1])
+            if rs is not None:
+                shoulder_y_series.append(rs[1])
+            mh = _midpoint(lh, rh)
+            if mh is not None:
+                hip_x_series.append(mh[0])
+            ms = _midpoint(ls, rs)
+            if ms is not None and mh is not None:
+                trunk_vec = ms - mh
+                angle = abs(np.degrees(np.arctan2(trunk_vec[0], -trunk_vec[1])))
+                trunk_angles.append(angle)
+
+        result = {}
+        if shoulder_y_series and len(shoulder_y_series) > 5:
+            result["lateral_lean_std"] = round(float(np.std(shoulder_y_series)), 4)
+        if hip_x_series and len(hip_x_series) > 5:
+            result["walking_stability"] = round(float(np.std(hip_x_series)), 4)
+        if trunk_angles:
+            result["trunk_lean_mean"] = round(float(np.mean(trunk_angles)), 1)
+            lean = result["trunk_lean_mean"]
+            if lean < 10:
+                result["posture_quality"] = "excellent"
+            elif lean < 20:
+                result["posture_quality"] = "good"
+            else:
+                result["posture_quality"] = "needs_work"
+
+        return result
+
+    # ═══════════════════════════════════════════════════════════════
+    # ISOLATION
+    # ═══════════════════════════════════════════════════════════════
+
+    def _analyze_isolation(self, frames: list[dict], primary_joints: list[str]) -> dict:
+        elbow_angles, shoulder_angles, body_sway = [], [], []
+        for f in frames:
+            le = self._lm(f, LEFT_ELBOW)
+            re = self._lm(f, RIGHT_ELBOW)
+            ls = self._lm(f, LEFT_SHOULDER)
+            rs = self._lm(f, RIGHT_SHOULDER)
+            lw = self._lm(f, LEFT_WRIST)
+            rw = self._lm(f, RIGHT_WRIST)
+            lh = self._lm(f, LEFT_HIP)
+            rh = self._lm(f, RIGHT_HIP)
+            if all(x is not None for x in [ls, le, lw]):
+                elbow_angles.append(self._joint_angle(ls, le, lw))
+            if all(x is not None for x in [rs, re, rw]):
+                elbow_angles.append(self._joint_angle(rs, re, rw))
+            if all(x is not None for x in [le, ls, lh]):
+                shoulder_angles.append(self._joint_angle(le, ls, lh))
+            mh = _midpoint(lh, rh)
+            if mh is not None:
+                body_sway.append(mh[0])
+
+        result = {}
+        if elbow_angles:
+            result["elbow_angle_min"] = round(float(np.min(elbow_angles)), 1)
+            result["elbow_angle_max"] = round(float(np.max(elbow_angles)), 1)
+            result["elbow_rom"] = round(float(np.max(elbow_angles) - np.min(elbow_angles)), 1)
+        if body_sway and len(body_sway) > 5:
+            sway_std = float(np.std(body_sway))
+            result["body_momentum_std"] = round(sway_std, 4)
+            if sway_std < 0.01:
+                result["isolation_quality"] = "excellent"
+            elif sway_std < 0.03:
+                result["isolation_quality"] = "good"
+            else:
+                result["isolation_quality"] = "poor"
+
+        return result
+
+    # ═══════════════════════════════════════════════════════════════
+    # GENERAL (fallback)
+    # ═══════════════════════════════════════════════════════════════
+
+    def _analyze_general(self, frames: list[dict]) -> dict:
+        trunk_angles, com_x, diffs = [], [], []
+        for f in frames:
+            ls = self._lm(f, LEFT_SHOULDER)
+            rs = self._lm(f, RIGHT_SHOULDER)
+            lh = self._lm(f, LEFT_HIP)
+            rh = self._lm(f, RIGHT_HIP)
+            ms = _midpoint(ls, rs)
+            mh = _midpoint(lh, rh)
+            if ms is not None and mh is not None:
+                trunk_vec = ms - mh
+                angle = abs(np.degrees(np.arctan2(trunk_vec[0], -trunk_vec[1])))
+                trunk_angles.append(angle)
+            if ls is not None and rs is not None:
+                span = abs(ls[0] - rs[0]) + 1e-8
+                diffs.append(abs(ls[1] - rs[1]) / span)
+            if mh is not None:
+                com_x.append(mh[0])
+
+        result = {}
+        if trunk_angles:
+            result["trunk_angle_mean"] = round(float(np.mean(trunk_angles)), 1)
+        if diffs:
+            result["shoulder_diff_mean"] = round(float(np.mean(diffs)), 4)
+        if com_x and len(com_x) > 1:
+            result["com_x_std"] = round(float(np.std(com_x)), 4)
+        return result
+
+    # ═══════════════════════════════════════════════════════════════
+    # UTILITY
+    # ═══════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def _joint_angle(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
+        """Angle ABC where B is the vertex. Returns degrees (0-180)."""
+        ba = a - b
+        bc = c - b
+        cosine = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-8)
+        cosine = np.clip(cosine, -1.0, 1.0)
+        return float(np.degrees(np.arccos(cosine)))

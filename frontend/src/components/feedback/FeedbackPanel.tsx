@@ -5,99 +5,102 @@ import { GlassCard } from "@/components/common/GlassCard";
 
 interface FeedbackPanelProps {
   feedback: FeedbackData;
+  overallScore?: number | null;
 }
 
-export function FeedbackPanel({ feedback }: FeedbackPanelProps) {
-  const score = feedback.overall_score || 0;
-  const scoreColor =
-    score >= 80 ? "text-green-400" : score >= 60 ? "text-yellow-400" : "text-red-400";
-  const scoreRing =
-    score >= 80 ? "stroke-green-400" : score >= 60 ? "stroke-yellow-400" : "stroke-red-400";
+function scoreColor(score: number): string {
+  if (score >= 85) return "text-emerald-400";
+  if (score >= 70) return "text-amber-400";
+  if (score >= 50) return "text-orange-400";
+  return "text-red-400";
+}
 
-  const circumference = 2 * Math.PI * 54;
-  const offset = circumference - (score / 100) * circumference;
+function scoreLabel(score: number): string {
+  if (score >= 90) return "Excellent 优秀";
+  if (score >= 80) return "Great 良好";
+  if (score >= 70) return "Good 不错";
+  if (score >= 60) return "Fair 一般";
+  if (score >= 40) return "Needs Work 需改进";
+  return "Poor 差";
+}
 
+export function FeedbackPanel({ feedback, overallScore }: FeedbackPanelProps) {
   return (
     <GlassCard className="space-y-6">
       {/* Overall Score */}
-      <div className="flex items-center gap-6">
-        <div className="relative w-32 h-32 flex-shrink-0">
-          <svg className="w-full h-full -rotate-90" viewBox="0 0 120 120">
-            <circle cx="60" cy="60" r="54" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="8" />
-            <circle
-              cx="60" cy="60" r="54"
-              fill="none"
-              className={scoreRing}
-              strokeWidth="8"
-              strokeLinecap="round"
-              strokeDasharray={circumference}
-              strokeDashoffset={offset}
-              style={{ transition: "stroke-dashoffset 1s ease-out" }}
-            />
-          </svg>
-          <div className="absolute inset-0 flex items-center justify-center">
-            <span className={`text-3xl font-bold ${scoreColor}`}>{Math.round(score)}</span>
+      {overallScore != null && overallScore > 0 && (
+        <div className="flex items-center gap-4 pb-4 border-b border-white/5">
+          <div className="flex items-baseline gap-1">
+            <span className={`text-4xl font-bold ${scoreColor(overallScore)}`}>
+              {overallScore}
+            </span>
+            <span className="text-sm text-slate-500">/100</span>
           </div>
-        </div>
-        <div>
-          <h3 className="text-lg font-semibold text-white">Movement Score</h3>
-          <p className="text-sm text-slate-400 mt-1">{feedback.summary}</p>
-        </div>
-      </div>
-
-      {/* Metric Bars */}
-      {feedback.metrics && (
-        <div className="space-y-3">
-          {Object.entries(feedback.metrics).map(([key, value]) => (
-            <div key={key} className="flex items-center gap-3">
-              <span className="w-24 text-sm text-slate-400 capitalize">{key}</span>
-              <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all duration-500 ${
-                    value >= 80
-                      ? "bg-gradient-to-r from-green-400 to-emerald-500"
-                      : value >= 60
-                      ? "bg-gradient-to-r from-yellow-400 to-orange-500"
-                      : "bg-gradient-to-r from-red-400 to-pink-500"
-                  }`}
-                  style={{ width: `${value}%` }}
-                />
-              </div>
-              <span className="w-10 text-sm text-right text-slate-300">{Math.round(value)}</span>
-            </div>
-          ))}
+          <div>
+            <p className={`text-sm font-semibold ${scoreColor(overallScore)}`}>
+              {scoreLabel(overallScore)}
+            </p>
+            <p className="text-xs text-slate-500">综合评分</p>
+          </div>
         </div>
       )}
 
+      {/* Summary */}
+      <div>
+        <h3 className="text-lg font-semibold text-white">Movement Analysis</h3>
+        <p className="text-sm text-slate-400 mt-2 leading-relaxed">{feedback.summary}</p>
+      </div>
+
       {/* Strengths & Improvements */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <h4 className="text-sm font-semibold text-green-400 mb-2">Strengths</h4>
-          <ul className="space-y-1">
-            {feedback.strengths.map((s, i) => (
-              <li key={i} className="text-sm text-slate-300 flex gap-2">
-                <span className="text-green-400">+</span> {s}
-              </li>
-            ))}
-          </ul>
-        </div>
-        <div>
-          <h4 className="text-sm font-semibold text-amber-400 mb-2">Areas to Improve</h4>
-          <ul className="space-y-1">
-            {feedback.improvements.map((s, i) => (
-              <li key={i} className="text-sm text-slate-300 flex gap-2">
-                <span className="text-amber-400">→</span> {s}
-              </li>
-            ))}
-          </ul>
-        </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {feedback.strengths && feedback.strengths.length > 0 && (
+          <div>
+            <h4 className="text-sm font-semibold text-green-400 mb-3 flex items-center gap-2">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              What You&apos;re Doing Well
+            </h4>
+            <ul className="space-y-2">
+              {feedback.strengths.map((s, i) => (
+                <li key={i} className="text-sm text-slate-300 flex gap-2">
+                  <span className="text-green-400 flex-shrink-0 mt-0.5">•</span>
+                  <span>{s}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {feedback.improvements && feedback.improvements.length > 0 && (
+          <div>
+            <h4 className="text-sm font-semibold text-sky-400 mb-3 flex items-center gap-2">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+              </svg>
+              Focus Areas
+            </h4>
+            <ul className="space-y-2">
+              {feedback.improvements.map((s, i) => (
+                <li key={i} className="text-sm text-slate-300 flex gap-2">
+                  <span className="text-sky-400 flex-shrink-0 mt-0.5">→</span>
+                  <span>{s}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
 
       {/* Detailed Feedback */}
-      <div>
-        <h4 className="text-sm font-semibold text-sky-400 mb-2">AI Analysis</h4>
-        <p className="text-sm text-slate-300 leading-relaxed">{feedback.detailed_feedback}</p>
-      </div>
+      {feedback.detailed_feedback && (
+        <div>
+          <h4 className="text-sm font-semibold text-slate-400 mb-2">Detailed Analysis</h4>
+          <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-line">
+            {feedback.detailed_feedback}
+          </p>
+        </div>
+      )}
     </GlassCard>
   );
 }

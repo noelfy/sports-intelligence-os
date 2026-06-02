@@ -9,8 +9,8 @@ const geistSans = Geist({
 });
 
 export const metadata: Metadata = {
-  title: "NeuroVolley AI — Sports Intelligence OS",
-  description: "AI-powered volleyball movement analysis platform. Upload your video and get biomechanical feedback.",
+  title: "FitForge — Your Personal Training Intelligence",
+  description: "Master your fitness journey with professional exercise science. Explore every muscle, discover your perfect workout, and train with confidence.",
 };
 
 export default function RootLayout({

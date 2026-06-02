@@ -5,7 +5,12 @@ import { useStore } from "@/lib/store";
 import { uploadVideo, pollUntilComplete } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-export function VideoUploader() {
+interface VideoUploaderProps {
+  exerciseId?: string;
+  onComplete?: (analysisId: string) => void;
+}
+
+export function VideoUploader({ exerciseId, onComplete }: VideoUploaderProps) {
   const { upload, setUpload } = useStore();
   const [dragOver, setDragOver] = useState(false);
 
@@ -13,18 +18,18 @@ export function VideoUploader() {
     async (file: File) => {
       const ext = file.name.split(".").pop()?.toLowerCase();
       if (!ext || !["mp4", "mov"].includes(ext)) {
-        setUpload({ error: "Please upload an MP4 or MOV file." });
+        setUpload({ error: "Please upload an MP4 or MOV file. (请上传 MP4 或 MOV 格式的视频)" });
         return;
       }
       if (file.size > 500 * 1024 * 1024) {
-        setUpload({ error: "File size must be under 500MB." });
+        setUpload({ error: "File size must be under 500MB. (文件大小不能超过 500MB)" });
         return;
       }
 
       setUpload({ file, status: "uploading", progress: 0, error: null });
 
       try {
-        const result = await uploadVideo(file, (pct) => {
+        const result = await uploadVideo(file, exerciseId, (pct) => {
           setUpload({ progress: pct });
         });
 
@@ -33,14 +38,19 @@ export function VideoUploader() {
           analysisId: result.analysis_id,
         });
 
-        const completed = await pollUntilComplete(result.analysis_id);
-        setUpload({ status: "completed" });
+        const finalResult = await pollUntilComplete(result.analysis_id);
+        if (finalResult.status === "failed") {
+          setUpload({ status: "error", error: "Analysis failed. Please try again with a clearer video. (分析失败，请使用更清晰的视频重试)" });
+        } else {
+          setUpload({ status: "completed" });
+          onComplete?.(result.analysis_id);
+        }
       } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : "Upload failed";
+        const msg = err instanceof Error ? err.message : "Upload failed (上传失败)";
         setUpload({ status: "error", error: msg });
       }
     },
-    [setUpload]
+    [setUpload, exerciseId, onComplete]
   );
 
   const handleDrop = useCallback(
@@ -66,7 +76,7 @@ export function VideoUploader() {
           "relative border-2 border-dashed rounded-2xl p-12 text-center transition-all duration-300 cursor-pointer",
           "bg-slate-900/50 backdrop-blur-sm",
           dragOver
-            ? "border-sky-400 bg-sky-500/5"
+            ? "border-amber-400 bg-amber-500/5"
             : upload.error
             ? "border-red-500/50"
             : "border-slate-700 hover:border-slate-500"
@@ -89,20 +99,23 @@ export function VideoUploader() {
 
         {upload.status === "idle" && (
           <div className="space-y-4">
-            <div className="w-16 h-16 mx-auto rounded-2xl bg-sky-500/10 flex items-center justify-center">
-              <svg className="w-8 h-8 text-sky-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="w-16 h-16 mx-auto rounded-2xl bg-amber-500/10 flex items-center justify-center">
+              <svg className="w-8 h-8 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
               </svg>
             </div>
             <div>
               <p className="text-lg font-medium text-slate-200">
-                Drop your volleyball video here
+                Drop your exercise video here
               </p>
-              <p className="text-sm text-slate-500 mt-1">
+              <p className="text-sm text-slate-400 mt-1">
+                拖放你的训练视频到这里
+              </p>
+              <p className="text-xs text-slate-500 mt-0.5">
                 MP4 or MOV, up to 500MB
               </p>
             </div>
-            <button className="px-6 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-xl text-sm font-medium transition-colors">
+            <button className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-medium transition-colors">
               Choose Video
             </button>
           </div>
@@ -111,10 +124,10 @@ export function VideoUploader() {
         {/* Uploading */}
         {upload.status === "uploading" && (
           <div className="space-y-4">
-            <p className="text-sky-400 font-medium">Uploading...</p>
+            <p className="text-amber-400 font-medium">Uploading... (上传中...)</p>
             <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
               <div
-                className="h-full bg-gradient-to-r from-sky-400 to-purple-500 rounded-full transition-all duration-300"
+                className="h-full bg-gradient-to-r from-amber-400 to-orange-500 rounded-full transition-all duration-300"
                 style={{ width: `${upload.progress}%` }}
               />
             </div>
@@ -125,8 +138,8 @@ export function VideoUploader() {
         {/* Processing */}
         {upload.status === "processing" && (
           <div className="space-y-4">
-            <div className="w-12 h-12 mx-auto border-2 border-sky-400 border-t-transparent rounded-full animate-spin" />
-            <p className="text-sky-400 font-medium">Analyzing Movement...</p>
+            <div className="w-12 h-12 mx-auto border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+            <p className="text-amber-400 font-medium">Analyzing Movement... (动作分析中...)</p>
             <p className="text-sm text-slate-500">
               Extracting pose keypoints and analyzing biomechanics
             </p>

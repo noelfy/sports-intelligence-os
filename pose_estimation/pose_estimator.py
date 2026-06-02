@@ -4,12 +4,70 @@ MediaPipe Pose estimator wrapper.
 Provides a clean interface for running pose estimation on images/video frames.
 """
 
+import os
 import cv2
 import numpy as np
 import mediapipe as mp
 
 from pose_estimation.config import PoseEstimationConfig, DEFAULT_POSE_CONFIG
 from pose_estimation.landmark_definitions import LANDMARK_COUNT, LANDMARK_NAMES
+
+# ── Workaround for MediaPipe Unicode path bug on Windows ──────────────
+# MediaPipe's C++ backend cannot handle paths with non-ASCII characters.
+# We redirect model resource directory resolution to a safe ASCII location.
+_MP_ASCII_PATH = os.path.join(
+    os.path.expanduser("~"), ".mediapipe_patch", "mediapipe"
+).replace("\\", "/")
+
+def _ensure_ascii_modules():
+    """Copy mediapipe modules to ASCII-safe path (idempotent)."""
+    src = os.path.join(os.path.dirname(mp.__file__), "modules")
+    dst = os.path.join(_MP_ASCII_PATH, "modules")
+    if not os.path.exists(os.path.join(dst, "pose_landmark")):
+        import shutil
+        if os.path.exists(dst):
+            shutil.rmtree(dst)
+        shutil.copytree(src, dst)
+    return dst
+
+_ensure_ascii_modules()
+
+# Monkey-patch: MediaPipe's C++ layer can't handle paths with non-ASCII
+# characters. We:
+#   1) Redirect resource_util.set_resource_dir to always use our ASCII-safe copy
+#   2) Patch SolutionBase.__init__ to pass an ASCII-safe binary_graph_path
+from mediapipe.python import solution_base as _mp_solution_base
+from mediapipe.python._framework_bindings import resource_util as _mp_resource
+
+_ASCII_ROOT = os.path.dirname(_MP_ASCII_PATH).replace("\\", "/")
+
+# Step 1: Force set_resource_dir to ALWAYS use the ASCII path (no-op the arg)
+_orig_set_resource_dir = _mp_resource.set_resource_dir
+def _locked_set_resource_dir(_path=None):
+    _orig_set_resource_dir(_ASCII_ROOT)
+_mp_resource.set_resource_dir = _locked_set_resource_dir
+
+# Step 2: Patch SolutionBase.__init__ to also fix binary_graph_path
+_SB_ORIG_INIT = _mp_solution_base.SolutionBase.__init__
+
+def _patched_sb_init(self, binary_graph_path=None, graph_config=None,
+                     calculator_params=None, graph_options=None,
+                     side_inputs=None, outputs=None, stream_type_hints=None):
+    if binary_graph_path:
+        binary_graph_path = os.path.join(_ASCII_ROOT, binary_graph_path).replace("\\", "/")
+    _SB_ORIG_INIT(
+        self,
+        binary_graph_path=binary_graph_path,
+        graph_config=graph_config,
+        calculator_params=calculator_params,
+        graph_options=graph_options,
+        side_inputs=side_inputs,
+        outputs=outputs,
+        stream_type_hints=stream_type_hints,
+    )
+
+_mp_solution_base.SolutionBase.__init__ = _patched_sb_init
+# ─────────────────────────────────────────────────────────────────────
 
 
 class PoseEstimator:

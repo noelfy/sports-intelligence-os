@@ -16,27 +16,46 @@ from backend.schemas.upload import AnalysisResult, AnalysisSummary, PaginatedRes
 router = APIRouter()
 
 
-def _build_result(analysis: Analysis) -> AnalysisResult:
-    """Build a full AnalysisResult from a DB record."""
-    return AnalysisResult(
-        analysis_id=analysis.id,
-        status=analysis.status,
-        video_url=f"/api/files/videos/{analysis.id}/original.mp4",
-        overlay_url=f"/api/files/videos/{analysis.id}/overlay.mp4",
-        keypoints_url=f"/api/files/keypoints/{analysis.id}/keypoints.json",
-        metadata={
-            "video_filename": analysis.video_filename,
-            "total_frames": analysis.total_frames,
-            "frames_with_pose": analysis.frames_with_pose,
-            "video_duration_ms": analysis.video_duration_ms,
-        },
-        feedback=analysis.feedback,
-        created_at=analysis.created_at,
-        completed_at=analysis.completed_at,
-    )
+def _build_result(analysis: Analysis) -> dict:
+    """Build a full analysis result dict from a DB record."""
+    video_url = f"/api/files/videos/{analysis.id}/original.mp4"
+    overlay_url = f"/api/files/videos/{analysis.id}/overlay.mp4"
+    keypoints_url = f"/api/files/keypoints/{analysis.id}/keypoints.json"
+
+    metadata: dict = {
+        "video_filename": analysis.video_filename,
+        "total_frames": analysis.total_frames,
+        "frames_with_pose": analysis.frames_with_pose,
+        "video_duration_ms": analysis.video_duration_ms,
+    }
+
+    # Add 3D-specific metadata
+    if analysis.is_3d:
+        metadata["is_3d"] = True
+        metadata["camera_count"] = analysis.camera_count
+        metadata["capture_mode"] = analysis.capture_mode
+        metadata["calibration_session_id"] = analysis.calibration_session_id
+        keypoints_url = f"/api/files/keypoints/{analysis.id}/keypoints_3d.json"
+
+    return {
+        "analysis_id": analysis.id,
+        "status": analysis.status,
+        "sport_type": analysis.sport_type or "general",
+        "overall_score": analysis.overall_score,
+        "video_url": video_url,
+        "overlay_url": overlay_url,
+        "keypoints_url": keypoints_url,
+        "metadata": metadata,
+        "feedback": analysis.feedback,
+        "is_3d": analysis.is_3d or False,
+        "capture_mode": analysis.capture_mode or "single_camera",
+        "camera_count": analysis.camera_count,
+        "created_at": analysis.created_at,
+        "completed_at": analysis.completed_at,
+    }
 
 
-@router.get("/results/{analysis_id}", response_model=AnalysisResult)
+@router.get("/results/{analysis_id}")
 async def get_result(analysis_id: str, db: Session = Depends(get_db)):
     """Get the full analysis result for a specific analysis ID."""
     analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()

@@ -50,6 +50,12 @@ class Analysis(Base):
     status = Column(String(20), default="processing", nullable=False)
     # processing | completed | failed
 
+    # Capture mode: "single_camera" (default) or "multi_camera"
+    capture_mode = Column(String(20), default="single_camera", nullable=False)
+    calibration_session_id = Column(String(36), nullable=True)
+    camera_count = Column(Integer, nullable=True)
+    is_3d = Column(Boolean, default=False)
+
     # Video info
     video_filename = Column(String(500), nullable=False)
     video_duration_ms = Column(Float, nullable=True)
@@ -91,6 +97,22 @@ class KeypointFrame(Base):
     angles = Column(JSON, nullable=True)  # Computed joint angles
 
     analysis = relationship("Analysis", back_populates="keypoint_frames")
+
+
+class CalibrationSession(Base):
+    """Multi-camera calibration session — stores calibration parameters."""
+
+    __tablename__ = "calibration_sessions"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=True)
+    name = Column(String(200), nullable=True)
+    camera_count = Column(Integer, nullable=False)
+    status = Column(String(20), default="collecting", nullable=False)
+    # collecting | calibrating | completed | failed
+    reprojection_error = Column(Float, nullable=True)
+    calibration_data = Column(JSON, nullable=True)  # intrinsics + extrinsics
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
 
 # --- Database Engine and Session ---
