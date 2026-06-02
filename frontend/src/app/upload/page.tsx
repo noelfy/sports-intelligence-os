@@ -288,6 +288,7 @@ function UploadPageContent() {
       <div className="mb-8">
         <VideoUploader
           exerciseId={selectedExercise?.id}
+          exerciseName={selectedExercise?.name}
           onComplete={(analysisId) => {
             router.push(`/results/${analysisId}`);
           }}

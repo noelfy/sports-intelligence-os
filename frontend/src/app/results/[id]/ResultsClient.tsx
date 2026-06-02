@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { getResult, getVideoUrl, getKeypointsUrl } from "@/lib/api";
+import { getClientResult } from "@/lib/client-results-store";
 import { getExerciseById } from "@/data/exercises";
 import { VideoPlayer } from "@/components/viewer/VideoPlayer";
 import { Viewer3D } from "@/components/viewer/Viewer3D";
@@ -12,16 +13,42 @@ import type { AnalysisResult } from "@/types";
 
 interface ResultsClientProps {
   analysisId: string;
-  initialResult: AnalysisResult;
+  initialResult: AnalysisResult | null;
+  isClientResult?: boolean;
 }
 
-export function ResultsClient({ analysisId, initialResult }: ResultsClientProps) {
-  const [result, setResult] = useState<AnalysisResult>(initialResult);
-  const [polling, setPolling] = useState(initialResult.status === "processing");
+export function ResultsClient({
+  analysisId,
+  initialResult,
+  isClientResult: _isClientResult,
+}: ResultsClientProps) {
+  const [result, setResult] = useState<AnalysisResult | null>(initialResult);
+  const [polling, setPolling] = useState(
+    !initialResult?.status ||
+      initialResult.status === "pending" ||
+      initialResult.status === "processing"
+  );
+  const [loadingFromClient, setLoadingFromClient] = useState(false);
 
-  // Poll for updates when status is "processing"
+  const isClient = analysisId.startsWith("client_");
+
+  // On mount, if this is a client-side result and we don't have it from the server,
+  // load it from sessionStorage
   useEffect(() => {
-    if (!polling) return;
+    if (!initialResult && isClient) {
+      setLoadingFromClient(true);
+      const stored = getClientResult(analysisId);
+      if (stored) {
+        setResult(stored);
+        setPolling(false);
+      }
+      setLoadingFromClient(false);
+    }
+  }, [analysisId, initialResult, isClient]);
+
+  // Poll for updates when status is "processing" (server results only)
+  useEffect(() => {
+    if (!polling || isClient) return;
 
     const interval = setInterval(async () => {
       try {
@@ -36,13 +63,50 @@ export function ResultsClient({ analysisId, initialResult }: ResultsClientProps)
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [polling, analysisId]);
+  }, [polling, analysisId, isClient]);
+
+  // ── Loading from client store ──
+  if (loadingFromClient) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-amber-500/30 border-t-amber-400 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // ── Not Found ──
+  if (!result) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4">
+        <div className="bg-slate-900/50 backdrop-blur-sm border border-white/5 rounded-2xl p-8 text-center space-y-4 max-w-md">
+          <h2 className="text-xl font-semibold text-red-400">Not Found</h2>
+          <p className="text-slate-400 text-sm">
+            This analysis result could not be found. It may have been deleted or
+            the link is invalid.
+          </p>
+          <Link
+            href="/upload"
+            className="inline-block px-4 py-2 text-sm text-amber-400 hover:text-amber-300 border border-amber-500/30 rounded-lg hover:bg-amber-500/10 transition-colors"
+          >
+            Try a New Analysis
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   // Resolve exercise name from sport_type
   const exercise = result.sport_type ? getExerciseById(result.sport_type) : null;
 
-  // Video URL — use absolute backend URL for reliable video streaming
-  const videoUrl = getVideoUrl(analysisId, "original.mp4");
+  // Video URL: use blob URL for client results, API URL for server results
+  const videoUrl = isClient
+    ? result.video_url
+    : getVideoUrl(analysisId, "original.mp4");
+
+  // Overlay video: only available on server results
+  const overlayUrl = isClient
+    ? ""
+    : getVideoUrl(analysisId, "overlay.mp4");
 
   // ── Processing State ──
   if (result.status === "pending" || result.status === "processing") {
@@ -61,7 +125,9 @@ export function ResultsClient({ analysisId, initialResult }: ResultsClientProps)
             <div className="w-8 h-8 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
           </div>
           <div className="text-center space-y-2">
-            <h2 className="text-xl font-semibold text-white">Analyzing Your Movement</h2>
+            <h2 className="text-xl font-semibold text-white">
+              Analyzing Your Movement
+            </h2>
             <p className="text-amber-400 text-sm">动作分析进行中...</p>
           </div>
           <p className="text-slate-500 text-sm max-w-md text-center">
@@ -99,8 +165,9 @@ export function ResultsClient({ analysisId, initialResult }: ResultsClientProps)
             <p className="text-red-400 text-sm">分析失败</p>
           </div>
           <p className="text-slate-500 text-sm max-w-md text-center">
-            We couldn&apos;t complete the analysis. This could be due to poor lighting,
-            the person not being fully visible, or an unsupported camera angle.
+            We couldn&apos;t complete the analysis. This could be due to poor
+            lighting, the person not being fully visible, or an unsupported
+            camera angle.
           </p>
           <Link
             href="/upload"
@@ -137,24 +204,38 @@ export function ResultsClient({ analysisId, initialResult }: ResultsClientProps)
       <div className="text-center mb-8">
         <h1 className="text-3xl font-bold text-white mb-2">
           Movement Analysis
-          <span className="text-amber-400 text-lg font-normal ml-2">动作分析报告</span>
+          <span className="text-amber-400 text-lg font-normal ml-2">
+            动作分析报告
+          </span>
         </h1>
         {exercise && (
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-amber-500/20 bg-amber-500/5">
-            <span className="text-amber-400 text-sm font-medium">{exercise.name}</span>
+            <span className="text-amber-400 text-sm font-medium">
+              {exercise.name}
+            </span>
             <span className="text-slate-500 text-sm">{exercise.nameZh}</span>
+          </div>
+        )}
+        {isClient && (
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 mt-2 rounded-full border border-green-500/20 bg-green-500/5">
+            <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
+            <span className="text-[10px] text-green-400">
+              On-Device Analysis · 设备端分析
+            </span>
           </div>
         )}
       </div>
 
-      {/* Video Player */}
-      <div className="mb-8">
-        <VideoPlayer
-          originalUrl={videoUrl}
-          overlayUrl={getVideoUrl(analysisId, "overlay.mp4")}
-          analysisId={analysisId}
-        />
-      </div>
+      {/* Video Player — only show for server results (client results use blob URL) */}
+      {videoUrl && videoUrl !== "/api/files/videos//original.mp4" && (
+        <div className="mb-8">
+          <VideoPlayer
+            originalUrl={videoUrl}
+            overlayUrl={overlayUrl}
+            analysisId={analysisId}
+          />
+        </div>
+      )}
 
       {/* 3D Viewer (only for multi-camera 3D analyses) */}
       {result.is_3d && (
@@ -163,7 +244,9 @@ export function ResultsClient({ analysisId, initialResult }: ResultsClientProps)
             <h3 className="text-sm font-semibold text-slate-300 mb-4 flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-emerald-400" />
               3D Skeleton View
-              <span className="text-emerald-400 text-xs font-normal">三维骨骼视图</span>
+              <span className="text-emerald-400 text-xs font-normal">
+                三维骨骼视图
+              </span>
             </h3>
             <Viewer3D analysisId={analysisId} />
           </div>
@@ -173,7 +256,40 @@ export function ResultsClient({ analysisId, initialResult }: ResultsClientProps)
       {/* Feedback */}
       {result.feedback && (
         <div className="mb-8">
-          <FeedbackPanel feedback={result.feedback} overallScore={result.overall_score} />
+          <FeedbackPanel
+            feedback={result.feedback}
+            overallScore={result.overall_score}
+          />
+        </div>
+      )}
+
+      {/* Metrics (client-side extra detail) */}
+      {(result as any).metrics && (
+        <div className="bg-slate-900/50 backdrop-blur-sm border border-white/5 rounded-2xl p-6 mb-8">
+          <h3 className="text-sm font-semibold text-slate-300 mb-4 flex items-center gap-2">
+            <CheckCircle className="w-4 h-4 text-emerald-400" />
+            Detailed Metrics
+            <span className="text-emerald-400 text-xs font-normal">
+              详细指标
+            </span>
+          </h3>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+            {[
+              { label: "Stability", key: "stability", desc: "稳定性" },
+              { label: "Symmetry", key: "symmetry", desc: "对称性" },
+              { label: "Range of Motion", key: "range_of_motion", desc: "活动范围" },
+              { label: "Tempo", key: "tempo", desc: "节奏" },
+              { label: "Posture", key: "posture", desc: "姿势" },
+            ].map(({ label, key, desc }) => (
+              <div key={key} className="text-center">
+                <p className="text-2xl font-bold text-amber-400">
+                  {(result as any).metrics[key]}
+                </p>
+                <p className="text-xs text-slate-400 mt-1">{label}</p>
+                <p className="text-[10px] text-slate-600">{desc}</p>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -189,7 +305,10 @@ export function ResultsClient({ analysisId, initialResult }: ResultsClientProps)
             {result.metadata.video_filename && (
               <div>
                 <p className="text-xs text-slate-500 mb-1">File</p>
-                <p className="text-sm text-slate-300 truncate" title={result.metadata.video_filename}>
+                <p
+                  className="text-sm text-slate-300 truncate"
+                  title={result.metadata.video_filename}
+                >
                   {result.metadata.video_filename}
                 </p>
               </div>
@@ -197,13 +316,25 @@ export function ResultsClient({ analysisId, initialResult }: ResultsClientProps)
             {result.metadata.total_frames && (
               <div>
                 <p className="text-xs text-slate-500 mb-1">Frames Analyzed</p>
-                <p className="text-sm text-slate-300">{result.metadata.total_frames}</p>
+                <p className="text-sm text-slate-300">
+                  {result.metadata.total_frames}
+                </p>
+              </div>
+            )}
+            {(result as any).detection_rate !== undefined && (
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Detection Rate</p>
+                <p className="text-sm text-slate-300">
+                  {Math.round((result as any).detection_rate * 100)}%
+                </p>
               </div>
             )}
             {result.metadata.video_fps && (
               <div>
-                <p className="text-xs text-slate-500 mb-1">Video FPS</p>
-                <p className="text-sm text-slate-300">{result.metadata.video_fps}</p>
+                <p className="text-xs text-slate-500 mb-1">Sample Rate</p>
+                <p className="text-sm text-slate-300">
+                  {result.metadata.video_fps} FPS
+                </p>
               </div>
             )}
             {result.completed_at && (
@@ -219,15 +350,22 @@ export function ResultsClient({ analysisId, initialResult }: ResultsClientProps)
       )}
 
       {/* Download Keypoints */}
-      <div className="text-center pb-12">
-        <a
-          href={result.is_3d ? getKeypointsUrl(analysisId, "keypoints_3d.json") : getKeypointsUrl(analysisId)}
-          download
-          className="text-sm text-slate-500 hover:text-amber-400 transition-colors underline underline-offset-4"
-        >
-          Download raw keypoint data{result.is_3d ? " (3D)" : ""} (JSON)
-        </a>
-      </div>
+      {!isClient && (
+        <div className="text-center pb-12">
+          <a
+            href={
+              result.is_3d
+                ? getKeypointsUrl(analysisId, "keypoints_3d.json")
+                : getKeypointsUrl(analysisId)
+            }
+            download
+            className="text-sm text-slate-500 hover:text-amber-400 transition-colors underline underline-offset-4"
+          >
+            Download raw keypoint data
+            {result.is_3d ? " (3D)" : ""} (JSON)
+          </a>
+        </div>
+      )}
     </div>
   );
 }

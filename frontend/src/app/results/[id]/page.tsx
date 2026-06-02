@@ -9,17 +9,22 @@ export default async function ResultPage({
 }) {
   const { id } = await params;
 
-  // Try to fetch initial data (may fail if the backend is unreachable server-side)
-  let initialResult;
+  // Try to fetch API result (works for Python backend in dev, or mock API in prod)
+  let initialResult = null;
   let fetchError: string | null = null;
+  let isClientResult = false;
 
   try {
     initialResult = await getResult(id);
   } catch {
-    fetchError = "Analysis not found. It may have been deleted or never existed.";
+    // If API fetch fails, this might be a client-side result
+    // The ResultsClient will check sessionStorage
+    fetchError =
+      "Result not found on server. Checking local storage...";
+    isClientResult = id.startsWith("client_");
   }
 
-  if (fetchError || !initialResult) {
+  if (fetchError && !isClientResult && !initialResult) {
     return (
       <div className="min-h-screen flex items-center justify-center px-4">
         <div className="bg-slate-900/50 backdrop-blur-sm border border-white/5 rounded-2xl p-8 text-center space-y-4 max-w-md">
@@ -36,6 +41,12 @@ export default async function ResultPage({
     );
   }
 
-  // Render client component that handles polling and display
-  return <ResultsClient analysisId={id} initialResult={initialResult} />;
+  // Render client component that handles both API and client-side results
+  return (
+    <ResultsClient
+      analysisId={id}
+      initialResult={initialResult}
+      isClientResult={isClientResult || (!initialResult && id.startsWith("client_"))}
+    />
+  );
 }
