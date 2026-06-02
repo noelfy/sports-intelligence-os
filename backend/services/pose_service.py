@@ -7,17 +7,18 @@ Runs pose estimation in a thread pool executor to avoid blocking the event loop.
 import asyncio
 import os
 
-from pose_estimation.video_processor import VideoProcessor
-from pose_estimation.config import PoseEstimationConfig
-
 
 class PoseService:
     """Async-compatible wrapper around the pose estimation pipeline."""
 
-    def __init__(self, config: PoseEstimationConfig | None = None):
-        self.config = config or PoseEstimationConfig()
+    def __init__(self, config=None):
+        self.config = config  # lazy: set when needed
 
     async def process_video(self, analysis_id: str) -> dict:
+        from pose_estimation.video_processor import VideoProcessor
+        from pose_estimation.config import PoseEstimationConfig
+        if self.config is None:
+            self.config = PoseEstimationConfig()
         """Process a video: extract poses, generate keypoints and overlay.
 
         Runs the CPU-bound processing in a thread pool executor.

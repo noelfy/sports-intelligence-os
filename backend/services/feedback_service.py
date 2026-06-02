@@ -9,13 +9,13 @@ import os
 import asyncio
 
 from backend.config import settings
-from analysis_engine.feedback_generator import FeedbackGenerator
 
 
 class FeedbackService:
     """Generates coaching feedback from movement analysis."""
 
     def __init__(self):
+        from analysis_engine.feedback_generator import FeedbackGenerator
         self.generator = FeedbackGenerator(
             api_key=settings.OPENAI_API_KEY,
             model=settings.OPENAI_MODEL,

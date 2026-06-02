@@ -8,11 +8,6 @@ category-specific metrics, observations, and joint angles.
 import json
 import os
 import asyncio
-import numpy as np
-
-from analysis_engine.joint_analyzer import JointAnalyzer
-from analysis_engine.movement_analyzer import MovementAnalyzer
-from analysis_engine.quality_evaluator import ObservationExtractor
 
 
 class AnalysisService:
@@ -20,9 +15,31 @@ class AnalysisService:
 
     def __init__(self, sport: str = "general"):
         self.sport = sport
-        self.joint_analyzer = JointAnalyzer()
-        self.movement_analyzer = MovementAnalyzer()
-        self.observation_extractor = ObservationExtractor(sport=sport)
+        self._joint_analyzer = None
+        self._movement_analyzer = None
+        self._observation_extractor = None
+
+    @property
+    def joint_analyzer(self):
+        if self._joint_analyzer is None:
+            import numpy as np  # noqa: F401
+            from analysis_engine.joint_analyzer import JointAnalyzer
+            self._joint_analyzer = JointAnalyzer()
+        return self._joint_analyzer
+
+    @property
+    def movement_analyzer(self):
+        if self._movement_analyzer is None:
+            from analysis_engine.movement_analyzer import MovementAnalyzer
+            self._movement_analyzer = MovementAnalyzer()
+        return self._movement_analyzer
+
+    @property
+    def observation_extractor(self):
+        if self._observation_extractor is None:
+            from analysis_engine.quality_evaluator import ObservationExtractor
+            self._observation_extractor = ObservationExtractor(sport=self.sport)
+        return self._observation_extractor
 
     async def analyze(self, analysis_id: str, sport: str | None = None) -> dict:
         """Analyze movement with exercise-specific biomechanics.

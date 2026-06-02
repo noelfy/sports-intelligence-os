@@ -17,15 +17,37 @@ from database.models import get_db, Analysis
 from backend.config import settings
 from backend.schemas.upload import UploadResponse, MultiUploadResponse
 from backend.services.storage_service import StorageService
-from backend.services.pose_service import PoseService
-from backend.services.analysis_service import AnalysisService
-from backend.services.feedback_service import FeedbackService
 
 router = APIRouter()
 
-pose_service = PoseService()
-analysis_service = AnalysisService()
-feedback_service = FeedbackService()
+# Lazy-initialized services (heavy deps: MediaPipe, OpenCV, NumPy, SciPy, OpenAI)
+_pose_service = None
+_analysis_service = None
+_feedback_service = None
+
+
+def _get_pose_service():
+    global _pose_service
+    if _pose_service is None:
+        from backend.services.pose_service import PoseService
+        _pose_service = PoseService()
+    return _pose_service
+
+
+def _get_analysis_service():
+    global _analysis_service
+    if _analysis_service is None:
+        from backend.services.analysis_service import AnalysisService
+        _analysis_service = AnalysisService()
+    return _analysis_service
+
+
+def _get_feedback_service():
+    global _feedback_service
+    if _feedback_service is None:
+        from backend.services.feedback_service import FeedbackService
+        _feedback_service = FeedbackService()
+    return _feedback_service
 
 
 def _validate_video(file: UploadFile) -> None:
@@ -198,7 +220,7 @@ async def _process_video_background(analysis_id: str, file_bytes: bytes, filenam
             ]
 
             # Step 1: Pose estimation on each camera
-            pose_result = await pose_service.process_multi_camera(
+            pose_result = await _get_pose_service().process_multi_camera(
                 analysis_id, video_paths
             )
 
@@ -211,7 +233,7 @@ async def _process_video_background(analysis_id: str, file_bytes: bytes, filenam
 
             # Step 3: 3D movement analysis
             exercise_id = analysis.sport_type if analysis.sport_type != "general" else None
-            analysis_result = await analysis_service.analyze_3d(
+            analysis_result = await _get_analysis_service().analyze_3d(
                 analysis_id, sport=exercise_id or "general"
             )
 
@@ -228,7 +250,7 @@ async def _process_video_background(analysis_id: str, file_bytes: bytes, filenam
             # MediaPipe Pose natively outputs (x, y, z) — we
             # leverage this for monocular 3D analysis.
             # ═══════════════════════════════════════════════════
-            pose_result = await pose_service.process_video(analysis_id)
+            pose_result = await _get_pose_service().process_video(analysis_id)
 
             if analysis:
                 analysis.total_frames = pose_result.get("metadata", {}).get("total_frames")
@@ -238,7 +260,7 @@ async def _process_video_background(analysis_id: str, file_bytes: bytes, filenam
             _create_3d_keypoints_from_single_camera(analysis_id)
 
             exercise_id = analysis.sport_type if analysis and analysis.sport_type != "general" else None
-            analysis_result = await analysis_service.analyze_3d(
+            analysis_result = await _get_analysis_service().analyze_3d(
                 analysis_id, sport=exercise_id or "general"
             )
 
@@ -251,7 +273,7 @@ async def _process_video_background(analysis_id: str, file_bytes: bytes, filenam
 
         # Step 4 (shared): AI feedback generation
         exercise_id = analysis.sport_type if analysis and analysis.sport_type != "general" else None
-        feedback_result = await feedback_service.generate(analysis_id, exercise_id=exercise_id)
+        feedback_result = await _get_feedback_service().generate(analysis_id, exercise_id=exercise_id)
 
         if analysis:
             analysis.feedback = feedback_result
@@ -308,12 +330,12 @@ async def _process_multi_upload_background(
             if cam0_path != orig_path:
                 import shutil as _shutil
                 _shutil.copy2(cam0_path, orig_path)
-            await pose_service.process_video(analysis_id)
+            await _get_pose_service().process_video(analysis_id)
             _create_3d_keypoints_from_single_camera(analysis_id)
         else:
             # ── Multi-camera: triangulated 3D ──
             # Step 1: Pose estimation on each camera video
-            pose_result = await pose_service.process_multi_camera(
+            pose_result = await _get_pose_service().process_multi_camera(
                 analysis_id, video_paths
             )
 
@@ -347,7 +369,7 @@ async def _process_multi_upload_background(
             analysis.is_3d = True
 
         # Step 4: AI feedback generation
-        feedback_result = await feedback_service.generate(
+        feedback_result = await _get_feedback_service().generate(
             analysis_id, exercise_id=effective_exercise
         )
 

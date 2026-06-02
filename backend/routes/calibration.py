@@ -15,16 +15,23 @@ from backend.schemas.calibration import (
     CameraParams,
     ExtrinsicParams,
 )
-from backend.services.calibration_service import CalibrationService
 
 router = APIRouter()
-calibration_service = CalibrationService()
+_calibration_service = None
+
+
+def _get_calibration_service():
+    global _calibration_service
+    if _calibration_service is None:
+        from backend.services.calibration_service import CalibrationService
+        _calibration_service = CalibrationService()
+    return _calibration_service
 
 
 @router.post("/calibration/sessions", response_model=CalibrationSessionSummary)
 async def create_calibration_session(body: CalibrationSessionCreate):
     """Create a new calibration session for multi-camera setup."""
-    result = await calibration_service.create_session(
+    result = await _get_calibration_service().create_session(
         camera_count=body.camera_count,
         name=body.name,
     )
@@ -45,7 +52,7 @@ async def upload_calibration_frame(
     position to enable extrinsic calibration.
     """
     # Validate session exists
-    session = await calibration_service.get_session(session_id)
+    session = await _get_calibration_service().get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Calibration session not found")
 
@@ -60,7 +67,7 @@ async def upload_calibration_frame(
     if len(image_bytes) > 10 * 1024 * 1024:  # 10MB max
         raise HTTPException(status_code=400, detail="Image too large (max 10MB)")
 
-    result = await calibration_service.process_frame(
+    result = await _get_calibration_service().process_frame(
         session_id, camera_index, image_bytes
     )
     return result
@@ -74,11 +81,11 @@ async def compute_calibration(session_id: str):
     Computes per-camera intrinsics and extrinsics. Requires at least
     5 frames per camera with the ChArUco board detected.
     """
-    session = await calibration_service.get_session(session_id)
+    session = await _get_calibration_service().get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Calibration session not found")
 
-    result = await calibration_service.compute_calibration(session_id)
+    result = await _get_calibration_service().compute_calibration(session_id)
     return result
 
 
@@ -86,7 +93,7 @@ async def compute_calibration(session_id: str):
             response_model=CalibrationResult)
 async def get_calibration(session_id: str):
     """Get calibration results for a session."""
-    session = await calibration_service.get_session(session_id)
+    session = await _get_calibration_service().get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Calibration session not found")
 
@@ -108,5 +115,5 @@ async def get_calibration(session_id: str):
 @router.get("/calibration/sessions", response_model=CalibrationSessionList)
 async def list_calibration_sessions():
     """List all calibration sessions."""
-    sessions = await calibration_service.list_sessions()
+    sessions = await _get_calibration_service().list_sessions()
     return {"sessions": sessions}

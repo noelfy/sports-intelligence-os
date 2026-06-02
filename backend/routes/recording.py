@@ -8,10 +8,16 @@ and checking status.
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from backend.services.recording_service import RecordingService
-
 router = APIRouter()
-recording_service = RecordingService()
+_recording_service = None
+
+
+def _get_recording_service():
+    global _recording_service
+    if _recording_service is None:
+        from backend.services.recording_service import RecordingService
+        _recording_service = RecordingService()
+    return _recording_service
 
 
 class StartRecordingRequest(BaseModel):
@@ -26,7 +32,7 @@ class StartRecordingRequest(BaseModel):
 @router.get("/recording/cameras")
 async def discover_cameras():
     """Detect available USB cameras connected to this machine."""
-    return await recording_service.discover_cameras()
+    return await _get_recording_service().discover_cameras()
 
 
 @router.post("/recording/start")
@@ -39,7 +45,7 @@ async def start_recording(body: StartRecordingRequest):
     if len(body.camera_ids) < 1:
         raise HTTPException(status_code=400, detail="At least 1 camera required")
 
-    result = await recording_service.start_recording(
+    result = await _get_recording_service().start_recording(
         camera_ids=body.camera_ids,
         exercise_id=body.exercise_id,
         calibration_session_id=body.calibration_session_id,
@@ -61,7 +67,7 @@ async def stop_recording(analysis_id: str):
     Stops all camera threads, finalizes video files, and returns
     recording metadata including video paths.
     """
-    result = await recording_service.stop_recording(analysis_id)
+    result = await _get_recording_service().stop_recording(analysis_id)
     if not result.get("success"):
         raise HTTPException(status_code=404, detail=result.get("error", "Recording not found"))
     return result
@@ -70,4 +76,4 @@ async def stop_recording(analysis_id: str):
 @router.get("/recording/{analysis_id}/status")
 async def get_recording_status(analysis_id: str):
     """Check the status of a recording session."""
-    return await recording_service.get_status(analysis_id)
+    return await _get_recording_service().get_status(analysis_id)
