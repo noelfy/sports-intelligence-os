@@ -23,18 +23,80 @@ api.interceptors.request.use((config) => {
 
 export async function uploadVideo(
   file: File,
+  exerciseId?: string,
   onProgress?: (pct: number) => void
 ): Promise<{ analysis_id: string; status: string; message: string }> {
   const formData = new FormData();
   formData.append("video", file);
+  if (exerciseId) {
+    formData.append("exercise_id", exerciseId);
+  }
   const { data } = await api.post("/upload", formData, {
-    headers: { "Content-Type": "multipart/form-data" },
+    // Let axios set Content-Type automatically with boundary for multipart
     onUploadProgress: (e) => {
       if (e.total && onProgress) {
         onProgress(Math.round((e.loaded / e.total) * 100));
       }
     },
   });
+  return data;
+}
+
+// === Multi-Video Upload (3D) ===
+
+export interface MultiUploadResult {
+  analysis_id: string;
+  status: string;
+  camera_count: number;
+  message: string;
+}
+
+export async function uploadMultiVideos(
+  files: File[],
+  calibrationSessionId?: string,
+  exerciseId?: string,
+  onProgress?: (pct: number) => void
+): Promise<MultiUploadResult> {
+  const formData = new FormData();
+  files.forEach((file) => {
+    formData.append("videos", file);
+  });
+  if (calibrationSessionId) {
+    formData.append("calibration_session_id", calibrationSessionId);
+  }
+  if (exerciseId) {
+    formData.append("exercise_id", exerciseId);
+  }
+
+  const totalSize = files.reduce((sum, f) => sum + f.size, 0);
+  let loadedTotal = 0;
+
+  const { data } = await api.post("/upload/multi", formData, {
+    onUploadProgress: (e) => {
+      if (e.loaded && totalSize && onProgress) {
+        // Track cumulative progress across all files
+        loadedTotal = e.loaded;
+        onProgress(Math.min(99, Math.round((loadedTotal / totalSize) * 100)));
+      }
+    },
+  });
+  return data;
+}
+
+// === Calibration ===
+
+export interface CalibrationSessionSummary {
+  session_id: string;
+  name: string;
+  camera_count: number;
+  status: string;
+  reprojection_error: number | null;
+  frame_counts: number[];
+  created_at: string;
+}
+
+export async function getCalibrationSessions(): Promise<CalibrationSessionSummary[]> {
+  const { data } = await api.get("/calibration/sessions");
   return data;
 }
 
@@ -49,8 +111,8 @@ export function getVideoUrl(analysisId: string, filename: string): string {
   return `${API_BASE}/files/videos/${analysisId}/${filename}`;
 }
 
-export function getKeypointsUrl(analysisId: string): string {
-  return `${API_BASE}/files/keypoints/${analysisId}/keypoints.json`;
+export function getKeypointsUrl(analysisId: string, filename = "keypoints.json"): string {
+  return `${API_BASE}/files/keypoints/${analysisId}/${filename}`;
 }
 
 export async function pollUntilComplete(
